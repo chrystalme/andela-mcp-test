@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-opus-4-7"
 
-    openrouter_api_key: SecretStr | None = None
+    groq_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
     llm_model: str = "openai/gpt-oss-120b"
 

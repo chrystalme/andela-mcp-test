@@ -125,7 +125,7 @@ async def test_respond_uses_runner_and_returns_traces(monkeypatch: pytest.Monkey
 
     svc = ChatService(
         clients={"shop": shop},
-        openrouter_api_key="rk-test",
+        groq_api_key="gk-test",
         model="openai/gpt-oss-120b",
         max_turns=5,
     )

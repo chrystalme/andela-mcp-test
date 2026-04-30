@@ -69,10 +69,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 raise
             clients[cfg.name] = client
         app.state.clients = clients
-        if settings.openrouter_api_key is not None:
+        if settings.groq_api_key is not None:
             app.state.chat = build_chat_service(
                 clients=clients,
-                openrouter_api_key=settings.openrouter_api_key.get_secret_value(),
+                groq_api_key=settings.groq_api_key.get_secret_value(),
                 model=settings.llm_model,
                 openai_api_key=(
                     settings.openai_api_key.get_secret_value()
@@ -193,7 +193,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:  # noqa: PLR0915 - 
         if chat_service is None:
             raise HTTPException(
                 status_code=503,
-                detail="chat is unavailable: ANDELA_MCP_OPENROUTER_API_KEY not configured",
+                detail="chat is unavailable: ANDELA_MCP_GROQ_API_KEY not configured",
             )
         if not req.messages:
             raise HTTPException(status_code=400, detail="messages must not be empty")

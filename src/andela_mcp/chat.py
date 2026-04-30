@@ -146,23 +146,23 @@ def _history_to_input(history: list[ChatMessage]) -> list[ResponseInputItemParam
 
 
 class ChatService:
-    """OpenAI-Agents-SDK chatbot, model served via OpenRouter, MCP tools via existing clients."""
+    """OpenAI-Agents-SDK chatbot, model served via Groq, MCP tools via existing clients."""
 
     def __init__(
         self,
         clients: dict[str, _MCPClientProto],
-        openrouter_api_key: str,
+        groq_api_key: str,
         model: str,
         instructions: str = _DEFAULT_INSTRUCTIONS,
         max_turns: int = _DEFAULT_MAX_TURNS,
-        openrouter_base_url: str = "https://openrouter.ai/api/v1",
+        groq_base_url: str = "https://api.groq.com/openai/v1",
     ) -> None:
         self._clients = clients
         self._instructions = instructions
         self._max_turns = max_turns
         self._openai_client = AsyncOpenAI(
-            api_key=openrouter_api_key,
-            base_url=openrouter_base_url,
+            api_key=groq_api_key,
+            base_url=groq_base_url,
         )
         self._model = OpenAIChatCompletionsModel(
             model=model, openai_client=self._openai_client
@@ -199,13 +199,13 @@ def configure_tracing(openai_api_key: str | None) -> None:
 def build_chat_service(
     *,
     clients: dict[str, MCPClient],
-    openrouter_api_key: str,
+    groq_api_key: str,
     model: str,
     openai_api_key: str | None = None,
 ) -> ChatService:
     configure_tracing(openai_api_key)
     return ChatService(
         clients=dict(clients),
-        openrouter_api_key=openrouter_api_key,
+        groq_api_key=groq_api_key,
         model=model,
     )
