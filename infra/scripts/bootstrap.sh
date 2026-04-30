@@ -113,6 +113,20 @@ TF_VAR_secret_values="$SECRET_JSON" \
     -var="project_number=$PROJECT_NUMBER" \
     -var="github_repository=$GITHUB_REPO"
 
+# Grant the deployer SA storage.objectAdmin on the state bucket so the deploy
+# workflow's `terraform init` against the GCS backend can read/write state.
+# Idempotent: gcloud add-iam-policy-binding silently no-ops if the role is
+# already bound.
+DEPLOYER_SA="$(terraform output -raw deployer_service_account 2>/dev/null || true)"
+if [ -n "$DEPLOYER_SA" ]; then
+  bold "==> Granting state bucket access to $DEPLOYER_SA"
+  gcloud storage buckets add-iam-policy-binding "gs://${STATE_BUCKET}" \
+    --member="serviceAccount:${DEPLOYER_SA}" \
+    --role=roles/storage.objectAdmin \
+    --project="$PROJECT_ID" >/dev/null
+  green "  granted roles/storage.objectAdmin"
+fi
+
 bold "==> Done. GitHub Actions variables (needed by .github/workflows/deploy.yml for OIDC):"
 GH_VARS_JSON="$(terraform output -json github_actions_variables)"
 echo "$GH_VARS_JSON" | python3 -c 'import json,sys; [print(f"  {k} = {v}") for k,v in json.load(sys.stdin).items()]'
