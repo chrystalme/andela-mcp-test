@@ -11,6 +11,11 @@ from typing import Any, Self
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
+
+# mcp ≥ 1.x marks `streamablehttp_client` as deprecated in favor of
+# `streamable_http_client`, but the new function dropped the `headers` kwarg —
+# callers must build an httpx.AsyncClient themselves. Until we need anything
+# beyond a simple bearer header, the deprecated form is the smaller surface.
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
 
