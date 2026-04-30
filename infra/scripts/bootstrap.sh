@@ -145,13 +145,18 @@ GH_VARS_JSON="$(terraform output -json github_actions_variables)"
 echo "$GH_VARS_JSON" | python3 -c 'import json,sys; [print(f"  {k} = {v}") for k,v in json.load(sys.stdin).items()]'
 
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-  bold "==> Pushing those variables to GitHub via gh CLI"
-  echo "$GH_VARS_JSON" | python3 -c '
-import json, sys, subprocess
-vars = json.load(sys.stdin)
-for k, v in vars.items():
-    subprocess.run(["gh", "variable", "set", k, "--body", v], check=True)
-    print(f"  set {k}")
+  bold "==> Pushing those variables to GitHub via gh CLI (scoped to env: $ENV)"
+  # Scope to the env so per-environment values don't clobber each other at the
+  # repo level. WIF provider goes in `secrets`, the rest in `variables`.
+  echo "$GH_VARS_JSON" | ENV="$ENV" python3 -c '
+import json, os, sys, subprocess
+env = os.environ["ENV"]
+data = json.load(sys.stdin)
+secret_keys = {"GCP_WORKLOAD_IDENTITY_PROVIDER"}
+for k, v in data.items():
+    cmd_kind = "secret" if k in secret_keys else "variable"
+    subprocess.run(["gh", cmd_kind, "set", k, "--env", env, "--body", v], check=True)
+    print(f"  set {cmd_kind} {k} on env {env}")
 '
   green "  Variables pushed. Trigger a deploy with: gh workflow run deploy.yml -f environment=$ENV"
 else
