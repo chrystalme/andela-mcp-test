@@ -8,6 +8,7 @@ locals {
 
 resource "google_project_service" "services" {
   for_each = toset([
+    "cloudresourcemanager.googleapis.com",
     "run.googleapis.com",
     "artifactregistry.googleapis.com",
     "iam.googleapis.com",
@@ -126,6 +127,15 @@ resource "google_artifact_registry_repository_iam_member" "deployer_push" {
 resource "google_project_iam_member" "deployer_run_admin" {
   project = var.project_id
   role    = "roles/run.admin"
+  member  = "serviceAccount:${google_service_account.deployer.email}"
+}
+
+# Needed so terraform plans (state refresh) can read the Secret Manager
+# secrets bootstrap.sh created out-of-band, and so the deploy workflow can
+# manage the IAM bindings on them.
+resource "google_project_iam_member" "deployer_secret_admin" {
+  project = var.project_id
+  role    = "roles/secretmanager.admin"
   member  = "serviceAccount:${google_service_account.deployer.email}"
 }
 
