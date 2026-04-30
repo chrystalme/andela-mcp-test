@@ -120,13 +120,9 @@ def _make_function_tool(
             result = await client.call_tool(tool_name, args)
         except MCPToolError as exc:
             log.warning("chat_tool_error", server=server, tool=tool_name)
-            traces.append(
-                ToolCallTrace(server=server, tool=tool_name, arguments=args, result=None)
-            )
+            traces.append(ToolCallTrace(server=server, tool=tool_name, arguments=args, result=None))
             return f"error: {exc}"
-        traces.append(
-            ToolCallTrace(server=server, tool=tool_name, arguments=args, result=result)
-        )
+        traces.append(ToolCallTrace(server=server, tool=tool_name, arguments=args, result=result))
         return _stringify_mcp_result(result)
 
     return FunctionTool(
@@ -164,9 +160,7 @@ class ChatService:
             api_key=groq_api_key,
             base_url=groq_base_url,
         )
-        self._model = OpenAIChatCompletionsModel(
-            model=model, openai_client=self._openai_client
-        )
+        self._model = OpenAIChatCompletionsModel(model=model, openai_client=self._openai_client)
 
     async def respond(self, history: list[ChatMessage]) -> ChatReply:
         traces: list[ToolCallTrace] = []

@@ -42,13 +42,14 @@ packages = ["src/andela_mcp"]
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
+extend-exclude = ["*.ipynb"]   # exploration notebooks — not production code
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "ASYNC", "S", "RET", "PL", "RUF"]
 ignore = ["S101", "PLR0913"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S", "PLR2004"]
+"tests/**" = ["S", "PLR2004", "PLC0415"]   # tests can have local imports for monkeypatching
 
 [tool.mypy]
 python_version = "3.12"

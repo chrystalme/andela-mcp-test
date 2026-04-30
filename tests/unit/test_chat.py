@@ -106,7 +106,7 @@ async def test_respond_uses_runner_and_returns_traces(monkeypatch: pytest.Monkey
 
     captured: dict[str, Any] = {}
 
-    async def fake_run(agent: Any, *, input: Any, max_turns: int) -> Any:  # noqa: A002
+    async def fake_run(agent: Any, *, input: Any, max_turns: int) -> Any:
         captured["agent"] = agent
         captured["input"] = input
         captured["max_turns"] = max_turns

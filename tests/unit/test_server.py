@@ -33,8 +33,9 @@ def test_call_tool_unknown_server_returns_404() -> None:
 
 
 class _StubClient:
-    def __init__(self, *, list_exc: BaseException | None = None,
-                 call_exc: BaseException | None = None) -> None:
+    def __init__(
+        self, *, list_exc: BaseException | None = None, call_exc: BaseException | None = None
+    ) -> None:
         self._list_exc = list_exc
         self._call_exc = call_exc
 
@@ -63,9 +64,7 @@ def _client_with_stub(stub: _StubClient) -> TestClient:
 def test_call_tool_returns_502_on_mcp_tool_error() -> None:
     tc = _client_with_stub(_StubClient(call_exc=MCPToolError("upstream failed: x")))
     try:
-        resp = tc.post(
-            "/v1/tools/call", json={"server": "fs", "tool": "t", "arguments": {}}
-        )
+        resp = tc.post("/v1/tools/call", json={"server": "fs", "tool": "t", "arguments": {}})
     finally:
         tc.__exit__(None, None, None)
     assert resp.status_code == 502
@@ -75,9 +74,7 @@ def test_call_tool_returns_502_on_mcp_tool_error() -> None:
 def test_call_tool_returns_504_on_timeout() -> None:
     tc = _client_with_stub(_StubClient(call_exc=TimeoutError()))
     try:
-        resp = tc.post(
-            "/v1/tools/call", json={"server": "fs", "tool": "t", "arguments": {}}
-        )
+        resp = tc.post("/v1/tools/call", json={"server": "fs", "tool": "t", "arguments": {}})
     finally:
         tc.__exit__(None, None, None)
     assert resp.status_code == 504
@@ -86,9 +83,7 @@ def test_call_tool_returns_504_on_timeout() -> None:
 def test_call_tool_returns_502_on_unexpected_error() -> None:
     tc = _client_with_stub(_StubClient(call_exc=RuntimeError("session dropped")))
     try:
-        resp = tc.post(
-            "/v1/tools/call", json={"server": "fs", "tool": "t", "arguments": {}}
-        )
+        resp = tc.post("/v1/tools/call", json={"server": "fs", "tool": "t", "arguments": {}})
     finally:
         tc.__exit__(None, None, None)
     assert resp.status_code == 502
