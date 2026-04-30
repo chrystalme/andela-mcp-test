@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from andela_mcp import __version__
+from andela_mcp.chat import ChatMessage, ChatReply, ChatService, build_chat_service
 from andela_mcp.client import (
     MCPClient,
     MCPConnectError,
@@ -34,6 +35,10 @@ class ToolCallResponse(BaseModel):
     server: str
     tool: str
     result: Any
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage]
 
 
 @asynccontextmanager
@@ -60,6 +65,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 raise
             clients[cfg.name] = client
         app.state.clients = clients
+        if settings.openrouter_api_key is not None:
+            app.state.chat = build_chat_service(
+                clients=clients,
+                openrouter_api_key=settings.openrouter_api_key.get_secret_value(),
+                model=settings.llm_model,
+                openai_api_key=(
+                    settings.openai_api_key.get_secret_value()
+                    if settings.openai_api_key is not None
+                    else None
+                ),
+            )
+        else:
+            app.state.chat = None
         log.info("startup_complete", servers=list(clients))
         yield
     finally:
@@ -80,6 +98,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:  # noqa: PLR0915 - 
     )
     app.state.settings = settings
     app.state.clients = {}
+    app.state.chat = None
 
     @app.middleware("http")
     async def request_context(request: Request, call_next: Any) -> Any:
@@ -159,6 +178,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:  # noqa: PLR0915 - 
                 detail=f"upstream MCP server {req.server!r} failed: {exc}",
             ) from exc
         return ToolCallResponse(server=req.server, tool=req.tool, result=result)
+
+    @app.post("/v1/chat", response_model=ChatReply)
+    async def chat(req: ChatRequest) -> ChatReply:
+        chat_service: ChatService | None = app.state.chat
+        if chat_service is None:
+            raise HTTPException(
+                status_code=503,
+                detail="chat is unavailable: ANDELA_MCP_OPENROUTER_API_KEY not configured",
+            )
+        if not req.messages:
+            raise HTTPException(status_code=400, detail="messages must not be empty")
+        try:
+            return await chat_service.respond(req.messages)
+        except Exception as exc:
+            log.exception("chat_failed")
+            raise HTTPException(status_code=502, detail=f"chat failed: {exc}") from exc
 
     return app
 

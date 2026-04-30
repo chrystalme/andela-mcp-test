@@ -1,0 +1,211 @@
+from __future__ import annotations
+
+import json
+from typing import Any, Literal, Protocol
+
+from agents import (
+    Agent,
+    FunctionTool,
+    OpenAIChatCompletionsModel,
+    RunContextWrapper,
+    Runner,
+    Tool,
+    set_default_openai_api,
+    set_tracing_disabled,
+    set_tracing_export_api_key,
+)
+from openai import AsyncOpenAI
+from openai.types.responses import ResponseInputItemParam
+from pydantic import BaseModel, Field
+
+from andela_mcp.client import MCPClient, MCPToolError
+from andela_mcp.logging import get_logger
+
+log = get_logger(__name__)
+
+_TOOL_NAME_SEPARATOR = "__"
+_DEFAULT_MAX_TURNS = 10
+_DEFAULT_INSTRUCTIONS = (
+    "You are a helpful customer service assistant for an online electronics store. "
+    "Use the provided tools to look up products, customers, and orders, and to "
+    "create orders. Before creating an order or revealing customer-specific data, "
+    "verify the customer's identity with verify_customer_pin. Keep replies concise."
+)
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ToolCallTrace(BaseModel):
+    server: str
+    tool: str
+    arguments: dict[str, Any]
+    result: Any
+
+
+class ChatReply(BaseModel):
+    reply: str
+    tool_calls: list[ToolCallTrace] = Field(default_factory=list)
+
+
+class _MCPClientProto(Protocol):
+    async def list_tools(self) -> list[dict[str, Any]]: ...
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any: ...
+
+
+def _qualify(server: str, tool: str) -> str:
+    return f"{server}{_TOOL_NAME_SEPARATOR}{tool}"
+
+
+def _split_qualified(name: str) -> tuple[str, str]:
+    server, _, tool = name.partition(_TOOL_NAME_SEPARATOR)
+    if not server or not tool:
+        raise ValueError(f"malformed qualified tool name: {name!r}")
+    return server, tool
+
+
+def _stringify_mcp_result(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            text = getattr(item, "text", None)
+            if text is None and isinstance(item, dict):
+                text = item.get("text")
+            parts.append(text if text is not None else str(item))
+        return "\n".join(parts)
+    return str(value)
+
+
+def _ensure_object_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
+    """Force schema into an object-with-properties shape (Agents SDK requires it)."""
+    base = dict(schema or {})
+    if base.get("type") != "object":
+        base = {"type": "object", "properties": {}}
+    base.setdefault("properties", {})
+    base.setdefault("additionalProperties", False)
+    return base
+
+
+async def build_function_tools(
+    clients: dict[str, _MCPClientProto],
+    traces: list[ToolCallTrace],
+) -> list[Tool]:
+    """Wrap every MCP tool from every server as a FunctionTool that records traces."""
+    tools: list[Tool] = []
+    for server, client in clients.items():
+        for t in await client.list_tools():
+            schema = _ensure_object_schema(t.get("inputSchema"))
+            tools.append(_make_function_tool(server, client, t, schema, traces))
+    return tools
+
+
+def _make_function_tool(
+    server: str,
+    client: _MCPClientProto,
+    tool_def: dict[str, Any],
+    schema: dict[str, Any],
+    traces: list[ToolCallTrace],
+) -> FunctionTool:
+    tool_name = tool_def["name"]
+    qualified = _qualify(server, tool_name)
+    description = (tool_def.get("description") or "").strip() or qualified
+
+    async def on_invoke(_ctx: RunContextWrapper[Any], args_json: str) -> str:
+        args: dict[str, Any] = json.loads(args_json) if args_json else {}
+        try:
+            result = await client.call_tool(tool_name, args)
+        except MCPToolError as exc:
+            log.warning("chat_tool_error", server=server, tool=tool_name)
+            traces.append(
+                ToolCallTrace(server=server, tool=tool_name, arguments=args, result=None)
+            )
+            return f"error: {exc}"
+        traces.append(
+            ToolCallTrace(server=server, tool=tool_name, arguments=args, result=result)
+        )
+        return _stringify_mcp_result(result)
+
+    return FunctionTool(
+        name=qualified,
+        description=description,
+        params_json_schema=schema,
+        on_invoke_tool=on_invoke,
+        strict_json_schema=False,
+    )
+
+
+def _history_to_input(history: list[ChatMessage]) -> list[ResponseInputItemParam]:
+    items: list[ResponseInputItemParam] = []
+    for m in history:
+        items.append({"role": m.role, "content": m.content})
+    return items
+
+
+class ChatService:
+    """OpenAI-Agents-SDK chatbot, model served via OpenRouter, MCP tools via existing clients."""
+
+    def __init__(
+        self,
+        clients: dict[str, _MCPClientProto],
+        openrouter_api_key: str,
+        model: str,
+        instructions: str = _DEFAULT_INSTRUCTIONS,
+        max_turns: int = _DEFAULT_MAX_TURNS,
+        openrouter_base_url: str = "https://openrouter.ai/api/v1",
+    ) -> None:
+        self._clients = clients
+        self._instructions = instructions
+        self._max_turns = max_turns
+        self._openai_client = AsyncOpenAI(
+            api_key=openrouter_api_key,
+            base_url=openrouter_base_url,
+        )
+        self._model = OpenAIChatCompletionsModel(
+            model=model, openai_client=self._openai_client
+        )
+
+    async def respond(self, history: list[ChatMessage]) -> ChatReply:
+        traces: list[ToolCallTrace] = []
+        tools = await build_function_tools(self._clients, traces)
+        agent: Agent[Any] = Agent(
+            name="andela-mcp-chat",
+            instructions=self._instructions,
+            tools=tools,
+            model=self._model,
+        )
+        result = await Runner.run(
+            agent, input=_history_to_input(history), max_turns=self._max_turns
+        )
+        return ChatReply(
+            reply=str(result.final_output or "").strip(),
+            tool_calls=traces,
+        )
+
+
+def configure_tracing(openai_api_key: str | None) -> None:
+    """Route Agents-SDK traces to OpenAI when a key is present, otherwise disable."""
+    if openai_api_key:
+        # Force chat completions API surface — gpt-oss / OpenRouter don't speak the Responses API.
+        set_default_openai_api("chat_completions")
+        set_tracing_export_api_key(openai_api_key)
+    else:
+        set_tracing_disabled(True)
+
+
+def build_chat_service(
+    *,
+    clients: dict[str, MCPClient],
+    openrouter_api_key: str,
+    model: str,
+    openai_api_key: str | None = None,
+) -> ChatService:
+    configure_tracing(openai_api_key)
+    return ChatService(
+        clients=dict(clients),
+        openrouter_api_key=openrouter_api_key,
+        model=model,
+    )

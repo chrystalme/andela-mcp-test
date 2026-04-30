@@ -14,6 +14,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "google-cloud-logging>=3.11",
+    "openai-agents>=0.14.8",
 ]
 
 [project.optional-dependencies]
