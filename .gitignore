@@ -31,3 +31,23 @@ infra/**/.terraform.lock.hcl
 infra/**/crash.log
 infra/**/*.tfvars
 !infra/**/*.tfvars.example
+infra/**/*.tfplan
+infra/**/*.tfplan.binary
+infra/**/.terraform.tfstate.lock.info
+
+# Secrets / credentials (catch-all for files that should never be committed)
+*.pem
+*.key
+*-key.json
+*credentials*.json
+*service-account*.json
+gha-creds-*.json
+secrets.auto.tfvars
+infra/**/secrets.auto.tfvars
+
+# Notebook checkpoint dirs
+.ipynb_checkpoints/
+
+# IDE / OS extras
+.cspell/
+*.iml

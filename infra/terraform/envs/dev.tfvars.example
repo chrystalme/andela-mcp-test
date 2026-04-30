@@ -1,19 +1,20 @@
 project_id        = "chatbot-andela"
-project_number    = "000000000000"
+project_number    = "" # auto-filled by `make tf-up` from `gcloud projects describe`
 region            = "us-central1"
 environment       = "dev"
-github_repository = "chrystalme/andela-mcp"
-image             = "us-central1-docker.pkg.dev/your-gcp-project-id/andela-mcp-dev/andela-mcp:latest"
+github_repository = "" # auto-filled by `make tf-up` from `git remote get-url origin`
 min_instances     = 0
 max_instances     = 3
 
 env = {
   ANDELA_MCP_ENVIRONMENT = "dev"
   ANDELA_MCP_LOG_FORMAT  = "json"
+  ANDELA_MCP_LLM_MODEL   = "openai/gpt-oss-120b"
 }
 
-secrets = {
-  ANDELA_MCP_ANTHROPIC_API_KEY = "andela-mcp-anthropic-key"
-}
+# Map ENV_VAR_NAME -> Secret Manager secret name. Leave empty unless you've
+# already created secrets out-of-band; `secret_values` (in secrets.auto.tfvars)
+# auto-creates them.
+secrets = {}
 
 allow_unauthenticated = false

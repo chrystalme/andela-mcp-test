@@ -53,6 +53,10 @@ docker-build: ## Build the production container image.
 docker-run: docker-build ## Build and run the container locally.
 	docker run --rm -p 8080:8080 --env-file env.example $(PROJECT):local
 
+.PHONY: tf-up
+tf-up: ## One-shot bootstrap: state bucket + WIF + secrets + Cloud Run + GitHub vars (auto-detects everything).
+	ENV=$(ENV) infra/scripts/bootstrap.sh
+
 .PHONY: tf-init
 tf-init: ## terraform init for $(ENV).
 	cd $(TF_DIR) && terraform init -backend-config="bucket=$$TF_STATE_BUCKET" -backend-config="prefix=$(PROJECT)/$(ENV)"

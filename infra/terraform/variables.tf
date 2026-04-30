@@ -31,7 +31,8 @@ variable "service_name" {
 
 variable "image" {
   type        = string
-  description = "Fully qualified container image (e.g. REGION-docker.pkg.dev/PROJECT/REPO/andela-mcp:TAG)."
+  description = "Fully qualified container image. Defaults to a Cloud Run hello placeholder so the first `terraform apply` succeeds before CI has built/pushed the real image."
+  default     = "gcr.io/cloudrun/hello"
 }
 
 variable "min_instances" {
@@ -69,6 +70,13 @@ variable "secrets" {
   type        = map(string)
   description = "Map of ENV_VAR_NAME -> Secret Manager secret name (no version). Mounted as 'latest'."
   default     = {}
+}
+
+variable "secret_values" {
+  type        = map(string)
+  description = "Map of ENV_VAR_NAME -> plaintext secret value. When set, Terraform creates the matching Secret Manager secret AND its first version. Keys must overlap with `secrets`. Provide via gitignored `secrets.auto.tfvars` or `TF_VAR_secret_values`."
+  default     = {}
+  sensitive   = true
 }
 
 variable "env" {
