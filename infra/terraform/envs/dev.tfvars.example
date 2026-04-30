@@ -1,0 +1,19 @@
+project_id        = "chatbot-andela"
+project_number    = "000000000000"
+region            = "us-central1"
+environment       = "dev"
+github_repository = "chrystalme/andela-mcp"
+image             = "us-central1-docker.pkg.dev/your-gcp-project-id/andela-mcp-dev/andela-mcp:latest"
+min_instances     = 0
+max_instances     = 3
+
+env = {
+  ANDELA_MCP_ENVIRONMENT = "dev"
+  ANDELA_MCP_LOG_FORMAT  = "json"
+}
+
+secrets = {
+  ANDELA_MCP_ANTHROPIC_API_KEY = "andela-mcp-anthropic-key"
+}
+
+allow_unauthenticated = false

@@ -1,0 +1,12 @@
+{
+  "servers": [
+    {
+      "name": "remote-mcp",
+      "transport": "http",
+      "url": "https://order-mcp-74afyau24q-uc.a.run.app/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ANDELA_MCP_REMOTE_TOKEN}"
+      }
+    }
+  ]
+}

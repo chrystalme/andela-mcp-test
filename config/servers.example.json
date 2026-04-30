@@ -1,0 +1,18 @@
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-filesystem", "/workspace"]
+    },
+    {
+      "name": "remote-mcp",
+      "transport": "http",
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ANDELA_MCP_REMOTE_TOKEN}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,91 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: dev
+        type: choice
+        options: [dev, staging, prod]
+
+permissions:
+  contents: read
+  id-token: write  # required for Workload Identity Federation
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    env:
+      TF_IN_AUTOMATION: "1"
+      ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP via WIF
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker auth
+        env:
+          REGION: ${{ vars.GCP_REGION }}
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Compute image tag
+        id: tag
+        env:
+          SHA: ${{ github.sha }}
+        run: echo "tag=${SHA::12}" >>"$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        id: image
+        env:
+          REGION: ${{ vars.GCP_REGION }}
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REPO: andela-mcp-${{ env.ENVIRONMENT }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/andela-mcp:${TAG}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >>"$GITHUB_OUTPUT"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Terraform init
+        working-directory: infra/terraform
+        env:
+          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="prefix=andela-mcp/${ENVIRONMENT}"
+
+      - name: Terraform apply
+        working-directory: infra/terraform
+        env:
+          TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+          TF_VAR_project_number: ${{ vars.GCP_PROJECT_NUMBER }}
+          TF_VAR_region: ${{ vars.GCP_REGION }}
+          TF_VAR_environment: ${{ env.ENVIRONMENT }}
+          TF_VAR_github_repository: ${{ github.repository }}
+          TF_VAR_image: ${{ steps.image.outputs.image }}
+        run: terraform apply -auto-approve -var-file="envs/${ENVIRONMENT}.tfvars"
