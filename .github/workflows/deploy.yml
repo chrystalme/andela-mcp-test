@@ -91,9 +91,11 @@ jobs:
         # CI only rolls the Cloud Run service forward to the new image.
         # Bootstrap-time resources (WIF, SAs, APIs, IAM bindings, Artifact
         # Registry) are managed by the local `make tf-up` flow with owner
-        # credentials — the deployer SA intentionally doesn't have project-
-        # wide read access. -target skips refresh on everything else.
+        # credentials. The deployer SA intentionally doesn't have project-
+        # wide read access, so we skip refresh entirely (-refresh=false) and
+        # narrowly target the Cloud Run service.
         run: |
           terraform apply -auto-approve \
+            -refresh=false \
             -var-file="envs/${ENVIRONMENT}.tfvars.example" \
             -target=google_cloud_run_v2_service.app
