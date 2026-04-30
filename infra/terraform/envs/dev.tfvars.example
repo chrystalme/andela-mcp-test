@@ -1,10 +1,10 @@
-project_id        = "chatbot-andela"
-project_number    = "" # auto-filled by `make tf-up` from `gcloud projects describe`
-region            = "us-central1"
-environment       = "dev"
-github_repository = "" # auto-filled by `make tf-up` from `git remote get-url origin`
-min_instances     = 0
-max_instances     = 3
+# `make tf-up` auto-detects project_id (gcloud), project_number (gcloud projects describe),
+# and github_repository (git remote get-url origin) and passes them via -var on the command
+# line, so leave those out of this file — adding them here would override the auto-detection.
+region        = "us-central1"
+environment   = "dev"
+min_instances = 0
+max_instances = 3
 
 env = {
   ANDELA_MCP_ENVIRONMENT = "dev"

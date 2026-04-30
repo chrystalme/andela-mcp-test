@@ -68,7 +68,10 @@ resource "google_project_iam_member" "runtime_trace" {
 }
 
 resource "google_secret_manager_secret" "managed" {
-  for_each  = var.secret_values
+  # `var.secret_values` is sensitive; Terraform forbids iterating sensitive maps
+  # in for_each because instance keys would leak. Iterate the (non-sensitive) keys
+  # and look up the value inside.
+  for_each  = nonsensitive(toset(keys(var.secret_values)))
   project   = var.project_id
   secret_id = "${var.service_name}-${var.environment}-${replace(lower(each.key), "_", "-")}"
 
@@ -81,9 +84,9 @@ resource "google_secret_manager_secret" "managed" {
 }
 
 resource "google_secret_manager_secret_version" "managed" {
-  for_each    = var.secret_values
+  for_each    = nonsensitive(toset(keys(var.secret_values)))
   secret      = google_secret_manager_secret.managed[each.key].id
-  secret_data = each.value
+  secret_data = var.secret_values[each.key]
 }
 
 resource "google_secret_manager_secret_iam_member" "runtime_secret_access" {
@@ -160,11 +163,12 @@ resource "google_service_account_iam_member" "deployer_act_as_runtime" {
 }
 
 resource "google_cloud_run_v2_service" "app" {
-  project  = var.project_id
-  location = var.region
-  name     = "${var.service_name}-${var.environment}"
-  ingress  = "INGRESS_TRAFFIC_ALL"
-  labels   = local.labels
+  project             = var.project_id
+  location            = var.region
+  name                = "${var.service_name}-${var.environment}"
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  labels              = local.labels
+  deletion_protection = false
 
   template {
     service_account                  = google_service_account.runtime.email

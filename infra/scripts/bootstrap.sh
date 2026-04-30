@@ -67,14 +67,20 @@ else
 fi
 
 bold "==> 4/5  Loading secrets from $ENV_FILE"
-declare -A SECRETS
+# Build the secret_values JSON for TF_VAR_secret_values inline (no assoc array
+# so this works on macOS' default bash 3.2).
 SECRET_KEYS=(ANDELA_MCP_GROQ_API_KEY ANDELA_MCP_OPENAI_API_KEY ANDELA_MCP_REMOTE_TOKEN)
+SECRET_JSON="{"
+first=1
 if [ -f "$ENV_FILE" ]; then
   for key in "${SECRET_KEYS[@]}"; do
     val="$(grep -E "^${key}=" "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
     val="${val%\"}"; val="${val#\"}"   # strip optional surrounding quotes
     if [ -n "$val" ]; then
-      SECRETS[$key]="$val"
+      esc="${val//\\/\\\\}"; esc="${esc//\"/\\\"}"
+      [ $first -eq 1 ] || SECRET_JSON+=","
+      SECRET_JSON+="\"$key\":\"$esc\""
+      first=0
       green "  $key (loaded)"
     else
       yellow "  $key (empty / missing)"
@@ -83,17 +89,6 @@ if [ -f "$ENV_FILE" ]; then
 else
   yellow "  $ENV_FILE not found — no secrets will be created. Set them in .env and re-run."
 fi
-
-# Build the secret_values JSON for TF_VAR_secret_values.
-SECRET_JSON="{"
-first=1
-for k in "${!SECRETS[@]}"; do
-  v="${SECRETS[$k]}"
-  esc="${v//\\/\\\\}"; esc="${esc//\"/\\\"}"
-  [ $first -eq 1 ] || SECRET_JSON+=","
-  SECRET_JSON+="\"$k\":\"$esc\""
-  first=0
-done
 SECRET_JSON+="}"
 
 bold "==> 5/5  Terraform init + apply ($ENV)"
@@ -110,11 +105,13 @@ terraform init -reconfigure \
   -backend-config="bucket=${STATE_BUCKET}" \
   -backend-config="prefix=andela-mcp/${ENV}"
 
-TF_VAR_project_id="$PROJECT_ID" \
-TF_VAR_project_number="$PROJECT_NUMBER" \
-TF_VAR_github_repository="$GITHUB_REPO" \
+# Pass auto-detected values via -var (highest precedence — beats anything in $TFVARS).
 TF_VAR_secret_values="$SECRET_JSON" \
-  terraform apply -auto-approve -var-file="$TFVARS"
+  terraform apply -auto-approve \
+    -var-file="$TFVARS" \
+    -var="project_id=$PROJECT_ID" \
+    -var="project_number=$PROJECT_NUMBER" \
+    -var="github_repository=$GITHUB_REPO"
 
 bold "==> Done. GitHub Actions variables (needed by .github/workflows/deploy.yml for OIDC):"
 GH_VARS_JSON="$(terraform output -json github_actions_variables)"
