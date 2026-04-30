@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Andela Order Store</title>
+<style>
+  :root {
+    --bg: #f7f6f3;
+    --surface: #ffffff;
+    --ink: #1c1b22;
+    --ink-soft: #5a5868;
+    --line: #e7e4dd;
+    --brand: #4f46e5;
+    --brand-2: #7c3aed;
+    --brand-soft: #eef0ff;
+    --shadow: 0 18px 50px -16px rgba(31, 24, 88, .35);
+    --shadow-soft: 0 6px 20px -10px rgba(31, 24, 88, .25);
+    --radius: 18px;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(124, 58, 237, .12), transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, rgba(79, 70, 229, .10), transparent 60%),
+      var(--bg);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page { max-width: 1080px; margin: 0 auto; padding: 64px 32px 200px; }
+  .nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 64px; }
+  .brand-mark { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: -.01em; }
+  .brand-mark .dot {
+    width: 28px; height: 28px; border-radius: 9px;
+    background: linear-gradient(135deg, var(--brand), var(--brand-2));
+    box-shadow: var(--shadow-soft);
+  }
+  .nav .links { display: flex; gap: 28px; color: var(--ink-soft); font-size: 14px; }
+  .nav .links a { color: inherit; text-decoration: none; }
+  .nav .links a:hover { color: var(--ink); }
+
+  .hero h1 { font-size: clamp(40px, 6vw, 72px); line-height: 1.04; letter-spacing: -0.035em; margin: 0 0 24px; max-width: 22ch; }
+  .hero h1 em {
+    font-style: normal;
+    background: linear-gradient(135deg, var(--brand), var(--brand-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero p { font-size: 18px; color: var(--ink-soft); max-width: 60ch; line-height: 1.55; margin: 0 0 32px; }
+  .hero .cta-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 18px; border-radius: 999px;
+    font-size: 14px; font-weight: 500;
+    background: var(--surface); border: 1px solid var(--line);
+    box-shadow: var(--shadow-soft); cursor: pointer;
+    transition: transform .15s ease;
+  }
+  .pill.brand {
+    background: linear-gradient(135deg, var(--brand), var(--brand-2));
+    color: white; border-color: transparent;
+  }
+  .pill:hover { transform: translateY(-1px); }
+
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px; margin-top: 80px;
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 24px;
+    box-shadow: var(--shadow-soft);
+  }
+  .card h3 { margin: 0 0 6px; font-size: 16px; letter-spacing: -.01em; }
+  .card p { margin: 0; color: var(--ink-soft); font-size: 14px; line-height: 1.5; }
+  .card .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    background: var(--brand-soft); color: var(--brand);
+    font-size: 11px; font-weight: 600; letter-spacing: .04em;
+    text-transform: uppercase; margin-bottom: 12px;
+  }
+
+  .fab {
+    position: fixed; right: 24px; bottom: 24px; z-index: 60;
+    width: 60px; height: 60px; border-radius: 50%;
+    border: none; cursor: pointer;
+    background: linear-gradient(135deg, var(--brand), var(--brand-2));
+    color: white; display: grid; place-items: center;
+    box-shadow: 0 14px 40px -10px rgba(79, 70, 229, .55);
+    transition: transform .2s ease, box-shadow .2s ease;
+  }
+  .fab:hover { transform: translateY(-2px) scale(1.04); }
+  .fab:active { transform: translateY(0) scale(.98); }
+  .fab svg { width: 26px; height: 26px; }
+  .fab .badge-pulse {
+    position: absolute; top: 6px; right: 6px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #22c55e; box-shadow: 0 0 0 0 rgba(34,197,94,.7);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(34,197,94,.7); }
+    70%  { box-shadow: 0 0 0 10px rgba(34,197,94,0); }
+    100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+  }
+
+  .panel {
+    position: fixed; right: 24px; bottom: 96px; z-index: 60;
+    width: min(400px, calc(100vw - 32px));
+    height: min(620px, calc(100vh - 130px));
+    background: var(--surface);
+    border-radius: var(--radius); overflow: hidden;
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    display: flex; flex-direction: column;
+    transform-origin: bottom right;
+    transform: translateY(8px) scale(.97); opacity: 0;
+    pointer-events: none;
+    transition: transform .22s cubic-bezier(.2,.7,.2,1), opacity .18s ease;
+  }
+  .panel.open { transform: translateY(0) scale(1); opacity: 1; pointer-events: auto; }
+
+  .panel-head {
+    padding: 16px 18px;
+    background: linear-gradient(135deg, var(--brand), var(--brand-2));
+    color: white; display: flex; align-items: center; gap: 12px;
+  }
+  .panel-head .avatar {
+    width: 38px; height: 38px; border-radius: 12px;
+    background: rgba(255,255,255,.18);
+    display: grid; place-items: center;
+  }
+  .panel-head .meta { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+  .panel-head .title { font-weight: 600; letter-spacing: -.01em; font-size: 15px; }
+  .panel-head .sub {
+    font-size: 12px; opacity: .9; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .panel-head .sub::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: #4ade80; box-shadow: 0 0 0 2px rgba(74, 222, 128, .25);
+  }
+  .panel-head button {
+    background: rgba(255,255,255,.15); border: none; color: white;
+    width: 32px; height: 32px; border-radius: 10px; cursor: pointer;
+    display: grid; place-items: center;
+  }
+  .panel-head button:hover { background: rgba(255,255,255,.25); }
+
+  .messages {
+    flex: 1; overflow-y: auto; padding: 18px;
+    display: flex; flex-direction: column; gap: 14px;
+    background: var(--surface);
+  }
+  .messages::-webkit-scrollbar { width: 6px; }
+  .messages::-webkit-scrollbar-thumb { background: rgba(0,0,0,.12); border-radius: 3px; }
+
+  .msg { display: flex; flex-direction: column; max-width: 85%; gap: 4px; }
+  .msg.user { align-self: flex-end; align-items: flex-end; }
+  .msg.bot  { align-self: flex-start; }
+  .bubble {
+    padding: 10px 14px; border-radius: 14px;
+    line-height: 1.45; font-size: 14px;
+    white-space: pre-wrap; word-wrap: break-word;
+  }
+  .msg.user .bubble {
+    background: linear-gradient(135deg, var(--brand), var(--brand-2));
+    color: white; border-bottom-right-radius: 4px;
+  }
+  .msg.bot .bubble { background: #f1f0ec; color: var(--ink); border-bottom-left-radius: 4px; }
+  .msg.bot .bubble.error { background: #fef2f2; color: #b91c1c; }
+  .tool-chips { display: flex; flex-wrap: wrap; gap: 4px; padding-left: 2px; }
+  .tool-chip {
+    font-size: 10.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 2px 8px; border-radius: 999px;
+    background: var(--brand-soft); color: var(--brand);
+    border: 1px solid rgba(79,70,229,.15);
+  }
+
+  .typing {
+    display: inline-flex; gap: 4px;
+    padding: 12px 14px; background: #f1f0ec;
+    border-radius: 14px; border-bottom-left-radius: 4px;
+    align-self: flex-start;
+  }
+  .typing span {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ink-soft); animation: blink 1.4s infinite both;
+  }
+  .typing span:nth-child(2) { animation-delay: .2s; }
+  .typing span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink {
+    0%, 80%, 100% { opacity: .3; transform: translateY(0); }
+    40% { opacity: 1; transform: translateY(-2px); }
+  }
+
+  .composer {
+    padding: 12px; border-top: 1px solid var(--line);
+    background: var(--surface);
+    display: flex; gap: 8px; align-items: flex-end;
+  }
+  .composer textarea {
+    flex: 1; resize: none;
+    border: 1px solid var(--line); border-radius: 12px;
+    padding: 10px 12px; font: inherit; font-size: 14px;
+    max-height: 120px; min-height: 40px;
+    background: var(--bg); color: var(--ink);
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .composer textarea:focus {
+    outline: none; border-color: var(--brand);
+    background: var(--surface);
+  }
+  .composer button {
+    width: 40px; height: 40px; border-radius: 12px;
+    border: none; cursor: pointer; color: white;
+    background: linear-gradient(135deg, var(--brand), var(--brand-2));
+    display: grid; place-items: center;
+    transition: transform .15s ease, opacity .15s ease;
+  }
+  .composer button:disabled { opacity: .4; cursor: not-allowed; }
+  .composer button:not(:disabled):hover { transform: translateY(-1px); }
+  .composer .reset {
+    background: transparent; color: var(--ink-soft);
+    border: 1px solid var(--line); width: auto; padding: 0 12px; font-size: 12px;
+  }
+  .composer .reset:hover { color: var(--ink); background: var(--bg); }
+
+  .empty { text-align: center; color: var(--ink-soft); padding: 36px 24px 24px; display: flex; flex-direction: column; gap: 14px; }
+  .empty h4 { margin: 0; color: var(--ink); font-size: 16px; }
+  .empty p { margin: 0; font-size: 13px; line-height: 1.5; }
+  .suggestions { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+  .suggestion {
+    text-align: left; cursor: pointer;
+    padding: 9px 12px; border-radius: 10px;
+    background: var(--bg); border: 1px solid var(--line);
+    font-size: 13px; color: var(--ink); transition: background .15s ease;
+  }
+  .suggestion:hover { background: var(--brand-soft); border-color: rgba(79,70,229,.25); }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14131a;
+      --surface: #1c1b24;
+      --ink: #f1efe9;
+      --ink-soft: #9a98a7;
+      --line: #2a2932;
+      --brand-soft: #1e1c3a;
+    }
+    .msg.bot .bubble { background: #2a2932; }
+    .typing { background: #2a2932; }
+    .composer textarea { background: #14131a; }
+    .composer textarea:focus { background: #1c1b24; }
+    .suggestion { background: #14131a; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <nav class="nav">
+    <div class="brand-mark"><span class="dot"></span> Andela Order Store</div>
+    <div class="links">
+      <a href="#">Catalog</a>
+      <a href="#">Orders</a>
+      <a href="#">Support</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <h1>Electronics, ordered <em>at the speed of conversation.</em></h1>
+    <p>Browse 200+ products across computers, monitors, printers, accessories, and networking. Need help? Tap the chat button — our AI assistant can verify your account, look up orders, and place new ones for you.</p>
+    <div class="cta-row">
+      <span class="pill brand" id="cta-open-chat">Try the assistant ↗</span>
+      <span class="pill">View catalog</span>
+    </div>
+  </header>
+
+  <section class="grid">
+    <div class="card">
+      <span class="badge">Catalog</span>
+      <h3>200 products</h3>
+      <p>Computers, monitors, printers, networking gear and more — searchable by SKU, category, or name.</p>
+    </div>
+    <div class="card">
+      <span class="badge">Account</span>
+      <h3>PIN verification</h3>
+      <p>The assistant verifies your identity before revealing or modifying any order data.</p>
+    </div>
+    <div class="card">
+      <span class="badge">Orders</span>
+      <h3>Conversational checkout</h3>
+      <p>Add an item, ask for the total, place the order — all without leaving the chat.</p>
+    </div>
+  </section>
+</div>
+
+<button class="fab" id="fab" aria-label="Open chat">
+  <span class="badge-pulse"></span>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+  </svg>
+</button>
+
+<aside class="panel" id="panel" role="dialog" aria-label="Chat with assistant">
+  <header class="panel-head">
+    <div class="avatar">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2a4 4 0 0 0-4 4v2a4 4 0 0 0 8 0V6a4 4 0 0 0-4-4z"/>
+        <path d="M5 22a7 7 0 0 1 14 0"/>
+      </svg>
+    </div>
+    <div class="meta">
+      <span class="title">Order Assistant</span>
+      <span class="sub">online • powered by MCP</span>
+    </div>
+    <button id="close" aria-label="Close">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  </header>
+
+  <div class="messages" id="messages"></div>
+
+  <form class="composer" id="composer">
+    <button type="button" class="reset" id="reset" title="Clear conversation">Reset</button>
+    <textarea id="input" rows="1" placeholder="Ask about products, orders, or sign in with your PIN…" autocomplete="off"></textarea>
+    <button type="submit" id="send" aria-label="Send">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4Z"/>
+      </svg>
+    </button>
+  </form>
+</aside>
+
+<script>
+(() => {
+  const STORAGE_KEY = "andela-mcp-chat-history-v1";
+  const fab = document.getElementById("fab");
+  const panel = document.getElementById("panel");
+  const closeBtn = document.getElementById("close");
+  const messagesEl = document.getElementById("messages");
+  const composer = document.getElementById("composer");
+  const input = document.getElementById("input");
+  const sendBtn = document.getElementById("send");
+  const resetBtn = document.getElementById("reset");
+  const ctaOpen = document.getElementById("cta-open-chat");
+
+  let history = [];
+  try { history = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { history = []; }
+  let pending = false;
+
+  const SUGGESTIONS = [
+    "What product categories do you sell?",
+    "I'm donaldgarcia@example.net, PIN 7912 — show my orders.",
+    "Search for ultrawide monitors under $700.",
+  ];
+
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  };
+
+  function renderEmpty() {
+    const wrap = el("div", "empty");
+    wrap.appendChild(el("h4", null, "👋 Hi there!"));
+    wrap.appendChild(el("p", null, "I can browse products, look up your orders, or place a new one. Try:"));
+    const sg = el("div", "suggestions");
+    SUGGESTIONS.forEach(s => {
+      const b = el("button", "suggestion", s);
+      b.type = "button";
+      b.addEventListener("click", () => { input.value = s; autoSize(); send(); });
+      sg.appendChild(b);
+    });
+    wrap.appendChild(sg);
+    messagesEl.appendChild(wrap);
+  }
+
+  function renderMessage(m) {
+    const wrap = el("div", `msg ${m.role === "user" ? "user" : "bot"}`);
+    const bubble = el("div", `bubble${m.error ? " error" : ""}`, m.content);
+    wrap.appendChild(bubble);
+    if (m.tool_calls && m.tool_calls.length) {
+      const chips = el("div", "tool-chips");
+      for (const tc of m.tool_calls) {
+        const c = el("span", "tool-chip", tc.tool);
+        c.title = `${tc.server}.${tc.tool}(${JSON.stringify(tc.arguments)})`;
+        chips.appendChild(c);
+      }
+      wrap.appendChild(chips);
+    }
+    messagesEl.appendChild(wrap);
+  }
+
+  function render() {
+    messagesEl.replaceChildren();
+    if (!history.length) { renderEmpty(); return; }
+    for (const m of history) renderMessage(m);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function showTyping() {
+    const t = el("div", "typing");
+    t.id = "typing";
+    for (let i = 0; i < 3; i++) t.appendChild(el("span"));
+    messagesEl.appendChild(t);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+  const hideTyping = () => document.getElementById("typing")?.remove();
+
+  const persist = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+
+  async function send() {
+    const text = input.value.trim();
+    if (!text || pending) return;
+    pending = true; sendBtn.disabled = true;
+
+    history.push({ role: "user", content: text });
+    persist(); render();
+    input.value = ""; autoSize();
+    showTyping();
+
+    try {
+      const res = await fetch("/v1/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          messages: history.map(({ role, content }) => ({ role, content })),
+        }),
+      });
+      hideTyping();
+      if (!res.ok) {
+        let detail = res.statusText;
+        try { detail = (await res.json()).detail || detail; } catch {}
+        history.push({ role: "assistant", content: `Error ${res.status}: ${detail}`, error: true });
+      } else {
+        const body = await res.json();
+        history.push({
+          role: "assistant",
+          content: body.reply || "(empty reply)",
+          tool_calls: body.tool_calls || [],
+        });
+      }
+    } catch (err) {
+      hideTyping();
+      history.push({ role: "assistant", content: `Network error: ${err.message}`, error: true });
+    } finally {
+      pending = false; sendBtn.disabled = false;
+      persist(); render();
+      input.focus();
+    }
+  }
+
+  function autoSize() {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 120) + "px";
+  }
+
+  function openChat() {
+    panel.classList.add("open");
+    setTimeout(() => input.focus(), 220);
+  }
+
+  fab.addEventListener("click", () => panel.classList.toggle("open"));
+  closeBtn.addEventListener("click", () => panel.classList.remove("open"));
+  ctaOpen.addEventListener("click", openChat);
+  composer.addEventListener("submit", e => { e.preventDefault(); send(); });
+  input.addEventListener("input", autoSize);
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+  resetBtn.addEventListener("click", () => {
+    history = []; persist(); render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

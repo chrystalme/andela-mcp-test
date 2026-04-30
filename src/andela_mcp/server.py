@@ -4,10 +4,12 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from andela_mcp import __version__
@@ -23,6 +25,8 @@ from andela_mcp.config import Settings, get_settings
 from andela_mcp.logging import configure_logging, get_logger
 
 log = get_logger(__name__)
+
+_STATIC_DIR = Path(__file__).parent / "static"
 
 
 class ToolCallRequest(BaseModel):
@@ -123,6 +127,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:  # noqa: PLR0915 - 
             structlog.contextvars.reset_contextvars(**token)
         response.headers["x-request-id"] = request_id
         return response
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    async def index() -> HTMLResponse:
+        return HTMLResponse((_STATIC_DIR / "index.html").read_text(encoding="utf-8"))
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
