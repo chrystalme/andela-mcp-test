@@ -11,13 +11,15 @@ COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /uvx /bin/
 
 WORKDIR /app
 
-COPY pyproject.toml ./
+# Hatchling reads `readme = "README.md"` and `packages = ["src/andela_mcp"]`
+# from pyproject.toml at build time, so README.md and the package source must
+# be present before `uv pip install .` runs. We do a single install to keep
+# things simple — fast, since uv caches both wheels and the resolution.
+COPY pyproject.toml README.md ./
+COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv /app/.venv && \
     uv pip install --python /app/.venv/bin/python .
-
-COPY src ./src
-RUN uv pip install --python /app/.venv/bin/python --no-deps .
 
 
 FROM python:3.12-slim AS runtime
