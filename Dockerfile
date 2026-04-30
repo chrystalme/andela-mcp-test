@@ -17,6 +17,7 @@ WORKDIR /app
 # things simple — fast, since uv caches both wheels and the resolution.
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY config ./config
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv /app/.venv && \
     uv pip install --python /app/.venv/bin/python .
@@ -36,6 +37,8 @@ RUN groupadd --system --gid 1001 app && \
 WORKDIR /app
 
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
+# load_server_configs reads config/servers.json (default ANDELA_MCP_SERVERS_CONFIG_PATH).
+COPY --from=builder --chown=app:app /app/config /app/config
 
 USER app
 EXPOSE 8080
