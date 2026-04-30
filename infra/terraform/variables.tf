@@ -68,15 +68,8 @@ variable "allow_unauthenticated" {
 
 variable "secrets" {
   type        = map(string)
-  description = "Map of ENV_VAR_NAME -> Secret Manager secret name (no version). Mounted as 'latest'."
+  description = "Map of ENV_VAR_NAME -> Secret Manager secret name (no version). Secrets are created out-of-band by infra/scripts/bootstrap.sh; Terraform only mounts them as 'latest'."
   default     = {}
-}
-
-variable "secret_values" {
-  type        = map(string)
-  description = "Map of ENV_VAR_NAME -> plaintext secret value. When set, Terraform creates the matching Secret Manager secret AND its first version. Keys must overlap with `secrets`. Provide via gitignored `secrets.auto.tfvars` or `TF_VAR_secret_values`."
-  default     = {}
-  sensitive   = true
 }
 
 variable "env" {

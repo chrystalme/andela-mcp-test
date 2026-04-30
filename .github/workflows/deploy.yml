@@ -88,4 +88,4 @@ jobs:
           TF_VAR_environment: ${{ env.ENVIRONMENT }}
           TF_VAR_github_repository: ${{ github.repository }}
           TF_VAR_image: ${{ steps.image.outputs.image }}
-        run: terraform apply -auto-approve -var-file="envs/${ENVIRONMENT}.tfvars"
+        run: terraform apply -auto-approve -var-file="envs/${ENVIRONMENT}.tfvars.example"

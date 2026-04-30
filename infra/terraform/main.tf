@@ -4,13 +4,6 @@ locals {
     environment = var.environment
     managed_by  = "terraform"
   }
-
-  # Secrets fall into two buckets:
-  #   - var.secrets       : pre-existing Secret Manager secrets, supplied as ENV_VAR -> secret_id.
-  #   - var.secret_values : plaintexts; Terraform creates the secret + first version for each.
-  # The Cloud Run service mounts both via the merged map below.
-  managed_secret_ids = { for k, v in google_secret_manager_secret.managed : k => v.secret_id }
-  effective_secrets  = merge(var.secrets, local.managed_secret_ids)
 }
 
 resource "google_project_service" "services" {
@@ -67,35 +60,15 @@ resource "google_project_iam_member" "runtime_trace" {
   member  = "serviceAccount:${google_service_account.runtime.email}"
 }
 
-resource "google_secret_manager_secret" "managed" {
-  # `var.secret_values` is sensitive; Terraform forbids iterating sensitive maps
-  # in for_each because instance keys would leak. Iterate the (non-sensitive) keys
-  # and look up the value inside.
-  for_each  = nonsensitive(toset(keys(var.secret_values)))
-  project   = var.project_id
-  secret_id = "${var.service_name}-${var.environment}-${replace(lower(each.key), "_", "-")}"
-
-  replication {
-    auto {}
-  }
-
-  labels     = local.labels
-  depends_on = [google_project_service.services]
-}
-
-resource "google_secret_manager_secret_version" "managed" {
-  for_each    = nonsensitive(toset(keys(var.secret_values)))
-  secret      = google_secret_manager_secret.managed[each.key].id
-  secret_data = var.secret_values[each.key]
-}
-
+# Secrets are created out-of-band by `infra/scripts/bootstrap.sh` (gcloud secrets
+# create / versions add) so the deploy workflow's terraform apply doesn't need
+# the plaintext values. Terraform only mounts existing secrets by name.
 resource "google_secret_manager_secret_iam_member" "runtime_secret_access" {
-  for_each   = local.effective_secrets
-  project    = var.project_id
-  secret_id  = each.value
-  role       = "roles/secretmanager.secretAccessor"
-  member     = "serviceAccount:${google_service_account.runtime.email}"
-  depends_on = [google_secret_manager_secret.managed]
+  for_each  = var.secrets
+  project   = var.project_id
+  secret_id = each.value
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runtime.email}"
 }
 
 resource "google_iam_workload_identity_pool" "github" {
@@ -205,7 +178,7 @@ resource "google_cloud_run_v2_service" "app" {
       }
 
       dynamic "env" {
-        for_each = local.effective_secrets
+        for_each = var.secrets
         content {
           name = env.key
           value_source {

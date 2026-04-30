@@ -1,6 +1,6 @@
 # `make tf-up` auto-detects project_id (gcloud), project_number (gcloud projects describe),
 # and github_repository (git remote get-url origin) and passes them via -var on the command
-# line, so leave those out of this file — adding them here would override the auto-detection.
+# line, so they're omitted here — adding them would override the auto-detection.
 region        = "us-central1"
 environment   = "dev"
 min_instances = 0
@@ -12,9 +12,15 @@ env = {
   ANDELA_MCP_LLM_MODEL   = "openai/gpt-oss-120b"
 }
 
-# Map ENV_VAR_NAME -> Secret Manager secret name. Leave empty unless you've
-# already created secrets out-of-band; `secret_values` (in secrets.auto.tfvars)
-# auto-creates them.
-secrets = {}
+# ENV_VAR -> Secret Manager secret name. Naming follows the convention used by
+# infra/scripts/bootstrap.sh: ${service_name}-${environment}-<envvar lowercased, _->->.
+# bootstrap.sh creates/updates these from .env; CI's terraform apply only mounts them.
+secrets = {
+  ANDELA_MCP_GROQ_API_KEY   = "andela-mcp-dev-andela-mcp-groq-api-key"
+  ANDELA_MCP_OPENAI_API_KEY = "andela-mcp-dev-andela-mcp-openai-api-key"
+  # Uncomment after putting a value for ANDELA_MCP_REMOTE_TOKEN in .env and re-running
+  # `make tf-up` so the secret exists in Secret Manager:
+  # ANDELA_MCP_REMOTE_TOKEN = "andela-mcp-dev-andela-mcp-remote-token"
+}
 
 allow_unauthenticated = false

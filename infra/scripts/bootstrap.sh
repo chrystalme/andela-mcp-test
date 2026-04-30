@@ -66,30 +66,42 @@ else
   gsutil versioning set on "gs://$STATE_BUCKET"
 fi
 
-bold "==> 4/5  Loading secrets from $ENV_FILE"
-# Build the secret_values JSON for TF_VAR_secret_values inline (no assoc array
-# so this works on macOS' default bash 3.2).
+bold "==> 4/5  Syncing secrets from $ENV_FILE to Secret Manager"
+# Secret naming convention (must match dev.tfvars.example's `secrets` map):
+#   ${SERVICE}-${ENV}-<envvar lowercased, underscores -> dashes>
+SERVICE_NAME="andela-mcp"
 SECRET_KEYS=(ANDELA_MCP_GROQ_API_KEY ANDELA_MCP_OPENAI_API_KEY ANDELA_MCP_REMOTE_TOKEN)
-SECRET_JSON="{"
-first=1
-if [ -f "$ENV_FILE" ]; then
+
+if [ ! -f "$ENV_FILE" ]; then
+  yellow "  $ENV_FILE not found — skipping secret sync."
+else
+  # Make sure the API is enabled (idempotent — fast no-op if already enabled).
+  gcloud services enable secretmanager.googleapis.com --project="$PROJECT_ID" >/dev/null 2>&1 || true
+
   for key in "${SECRET_KEYS[@]}"; do
     val="$(grep -E "^${key}=" "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
     val="${val%\"}"; val="${val#\"}"   # strip optional surrounding quotes
-    if [ -n "$val" ]; then
-      esc="${val//\\/\\\\}"; esc="${esc//\"/\\\"}"
-      [ $first -eq 1 ] || SECRET_JSON+=","
-      SECRET_JSON+="\"$key\":\"$esc\""
-      first=0
-      green "  $key (loaded)"
+    if [ -z "$val" ]; then
+      yellow "  $key (empty / missing) — skipped"
+      continue
+    fi
+
+    secret_name="${SERVICE_NAME}-${ENV}-$(printf %s "$key" | tr '[:upper:]_' '[:lower:]-')"
+
+    # Create the secret if it doesn't exist (ignore the "already exists" error).
+    gcloud secrets create "$secret_name" \
+      --project="$PROJECT_ID" --replication-policy=automatic \
+      >/dev/null 2>&1 || true
+
+    # Add a new version. SM keeps the old ones; "latest" alias auto-rolls.
+    if printf %s "$val" | gcloud secrets versions add "$secret_name" \
+         --project="$PROJECT_ID" --data-file=- >/dev/null 2>&1; then
+      green "  $key -> $secret_name"
     else
-      yellow "  $key (empty / missing)"
+      red "  $key (failed to add version to $secret_name)"
     fi
   done
-else
-  yellow "  $ENV_FILE not found — no secrets will be created. Set them in .env and re-run."
 fi
-SECRET_JSON+="}"
 
 bold "==> 5/5  Terraform init + apply ($ENV)"
 cd "$TF_DIR"
@@ -106,12 +118,11 @@ terraform init -reconfigure \
   -backend-config="prefix=andela-mcp/${ENV}"
 
 # Pass auto-detected values via -var (highest precedence — beats anything in $TFVARS).
-TF_VAR_secret_values="$SECRET_JSON" \
-  terraform apply -auto-approve \
-    -var-file="$TFVARS" \
-    -var="project_id=$PROJECT_ID" \
-    -var="project_number=$PROJECT_NUMBER" \
-    -var="github_repository=$GITHUB_REPO"
+terraform apply -auto-approve \
+  -var-file="$TFVARS" \
+  -var="project_id=$PROJECT_ID" \
+  -var="project_number=$PROJECT_NUMBER" \
+  -var="github_repository=$GITHUB_REPO"
 
 # Grant the deployer SA storage.objectAdmin on the state bucket so the deploy
 # workflow's `terraform init` against the GCS backend can read/write state.
