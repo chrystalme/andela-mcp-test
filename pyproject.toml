@@ -6,7 +6,6 @@ requires-python = ">=3.12"
 readme = "README.md"
 dependencies = [
     "mcp>=1.2.0",
-    "anthropic>=0.40.0",
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
     "structlog>=24.4",
@@ -15,6 +14,7 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "google-cloud-logging>=3.11",
     "openai-agents>=0.14.8",
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]

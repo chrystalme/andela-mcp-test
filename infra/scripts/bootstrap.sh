@@ -106,14 +106,8 @@ fi
 bold "==> 5/5  Terraform init + apply ($ENV)"
 cd "$TF_DIR"
 
-# Auto-create envs/<env>.tfvars from the example if missing, with project_id pre-filled.
 TFVARS="envs/${ENV}.tfvars"
-EXAMPLE="envs/${ENV}.tfvars.example"
-[ -f "$EXAMPLE" ] || { red "  $EXAMPLE not found — create it before bootstrapping ENV=$ENV"; exit 1; }
-if [ ! -f "$TFVARS" ]; then
-  cp "$EXAMPLE" "$TFVARS"
-  yellow "  generated $TFVARS from $EXAMPLE — review before re-running"
-fi
+[ -f "$TFVARS" ] || { red "  $TFVARS not found — commit it before bootstrapping ENV=$ENV"; exit 1; }
 
 terraform init -reconfigure \
   -backend-config="bucket=${STATE_BUCKET}" \

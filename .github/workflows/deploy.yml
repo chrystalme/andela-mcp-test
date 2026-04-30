@@ -27,7 +27,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Gate: push-to-{main,develop} must pass lint + typecheck + tests before
+  # the deploy job builds an image. Mirrors ci.yml's python job so direct
+  # pushes can't sidestep CI by skipping pull_request.
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy src
+      - run: uv run pytest -m "not integration"
+
   deploy:
+    needs: tests
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || (github.ref_name == 'main' && 'prod') || (github.ref_name == 'develop' && 'dev') || 'staging' }}
 
@@ -102,6 +121,6 @@ jobs:
         run: |
           terraform apply -auto-approve \
             -refresh=false \
-            -var-file="envs/${ENVIRONMENT}.tfvars.example" \
+            -var-file="envs/${ENVIRONMENT}.tfvars" \
             -target=google_cloud_run_v2_service.app \
             -target=google_cloud_run_v2_service_iam_member.public

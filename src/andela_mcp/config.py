@@ -58,9 +58,6 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"  # noqa: S104  # bind in container; restrict via firewall/IAM
     port: int = 8080
 
-    anthropic_api_key: SecretStr | None = None
-    anthropic_model: str = "claude-opus-4-7"
-
     groq_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
     llm_model: str = "openai/gpt-oss-120b"

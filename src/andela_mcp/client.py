@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from contextlib import AsyncExitStack
 from pathlib import Path
 from types import TracebackType
@@ -18,6 +20,7 @@ from andela_mcp.logging import get_logger
 log = get_logger(__name__)
 
 _ERROR_CONTENT_MAX_CHARS = 500
+_ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def _truncate_for_error(value: object, limit: int = _ERROR_CONTENT_MAX_CHARS) -> str:
@@ -41,10 +44,28 @@ class MCPToolError(RuntimeError):
     """Raised when an upstream MCP tool call returns an error result."""
 
 
+def _expand_env_vars(value: Any) -> Any:
+    """Substitute ${VAR} placeholders against the process environment.
+
+    Recurses into dict/list values. Unset variables become empty strings; the
+    caller is expected to validate that critical secrets aren't blank.
+    """
+    if isinstance(value, str):
+        return _ENV_VAR_PATTERN.sub(lambda m: os.environ.get(m.group(1), ""), value)
+    if isinstance(value, dict):
+        return {k: _expand_env_vars(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env_vars(v) for v in value]
+    return value
+
+
 def load_server_configs(path: Path) -> list[MCPServerConfig]:
     """Load and validate the upstream MCP server registry from JSON.
 
     Schema: a top-level `servers` list, each entry shaped like `MCPServerConfig`.
+    `${ENV_VAR}` placeholders in any string field are expanded against the
+    process environment so secrets (e.g. bearer tokens) can be injected without
+    landing in the committed config.
     """
     if not path.exists():
         log.warning("servers_config_missing", path=str(path))
@@ -56,6 +77,8 @@ def load_server_configs(path: Path) -> list[MCPServerConfig]:
     except json.JSONDecodeError as exc:
         log.error("servers_config_invalid_json", path=str(path), error=str(exc))
         raise ServersConfigError(f"invalid JSON in {path}: {exc}") from exc
+
+    raw = _expand_env_vars(raw)
 
     try:
         configs = [MCPServerConfig.model_validate(s) for s in raw.get("servers", [])]
@@ -88,6 +111,11 @@ class MCPClient:
         await self.close()
 
     async def connect(self) -> None:
+        if self._session is not None:
+            raise RuntimeError(
+                f"MCP client {self.config.name!r} is already connected; "
+                "call close() before reconnecting"
+            )
         log.info("mcp_connect", server=self.config.name, transport=self.config.transport)
 
         try:

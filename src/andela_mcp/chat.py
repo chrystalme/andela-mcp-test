@@ -33,9 +33,13 @@ _DEFAULT_INSTRUCTIONS = (
 )
 
 
+MAX_MESSAGE_CHARS = 8000
+MAX_HISTORY_MESSAGES = 50
+
+
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str
+    content: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
 
 
 class ToolCallTrace(BaseModel):
@@ -57,13 +61,6 @@ class _MCPClientProto(Protocol):
 
 def _qualify(server: str, tool: str) -> str:
     return f"{server}{_TOOL_NAME_SEPARATOR}{tool}"
-
-
-def _split_qualified(name: str) -> tuple[str, str]:
-    server, _, tool = name.partition(_TOOL_NAME_SEPARATOR)
-    if not server or not tool:
-        raise ValueError(f"malformed qualified tool name: {name!r}")
-    return server, tool
 
 
 def _stringify_mcp_result(value: Any) -> str:

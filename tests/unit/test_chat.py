@@ -11,7 +11,6 @@ from andela_mcp.chat import (
     ChatService,
     ToolCallTrace,
     _ensure_object_schema,
-    _split_qualified,
     _stringify_mcp_result,
     build_function_tools,
 )
@@ -38,12 +37,6 @@ class _StubMCPClient:
         if name in self._errors:
             raise self._errors[name]
         return self._results.get(name, "ok")
-
-
-def test_split_qualified_round_trip() -> None:
-    assert _split_qualified("shop__list_products") == ("shop", "list_products")
-    with pytest.raises(ValueError):
-        _split_qualified("nosep")
 
 
 def test_ensure_object_schema_normalizes_input() -> None:

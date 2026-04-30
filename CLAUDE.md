@@ -39,7 +39,7 @@ GitHub Actions → GCP via **Workload Identity Federation** (no service-account 
 
 The deploy workflow needs these GitHub repo **Variables** set (not Secrets — they're non-sensitive identifiers): `GCP_PROJECT_ID`, `GCP_PROJECT_NUMBER`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOYER_SERVICE_ACCOUNT`, `TF_STATE_BUCKET`. The first apply's outputs tell you what to paste.
 
-Secrets (e.g. `ANDELA_MCP_ANTHROPIC_API_KEY`) are stored in **Secret Manager** and mounted into the Cloud Run container via the `secrets` Terraform variable (`map[ENV_VAR] = secret_name`). Do not pass secrets through `env`.
+Secrets (e.g. `ANDELA_MCP_GROQ_API_KEY`) are stored in **Secret Manager** (created by `infra/scripts/bootstrap.sh` from the operator's local `.env`, not by Terraform) and mounted into the Cloud Run container via the `secrets` Terraform variable (`map[ENV_VAR] = secret_name`). Do not pass secrets through `env`.
 
 ## Conventions worth respecting
 

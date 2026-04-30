@@ -29,8 +29,10 @@ infra/**/*.tfstate
 infra/**/*.tfstate.*
 infra/**/.terraform.lock.hcl
 infra/**/crash.log
-infra/**/*.tfvars
-!infra/**/*.tfvars.example
+# envs/*.tfvars are committed: they hold non-secret config (instance counts,
+# allow_unauthenticated, secret *names*). Plaintext secret VALUES never go in
+# Terraform — bootstrap.sh writes them to Secret Manager via gcloud.
+infra/**/secrets.auto.tfvars
 infra/**/*.tfplan
 infra/**/*.tfplan.binary
 infra/**/.terraform.tfstate.lock.info

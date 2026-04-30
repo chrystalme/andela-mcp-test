@@ -9,8 +9,8 @@ A Python service that consumes upstream Model Context Protocol (MCP) servers, re
 - **Frontend:** single static HTML page with vanilla-JS floating chat widget (markdown rendered via `marked` + `DOMPurify`)
 - **Tooling:** [uv](https://docs.astral.sh/uv/) (deps), ruff (lint+format), mypy (strict), pytest+coverage, pre-commit, gitleaks
 - **Container:** multi-stage Dockerfile, non-root user, healthcheck
-- **Infra:** Terraform ≥ 1.10 → Cloud Run, Artifact Registry, Secret Manager, IAM, Workload Identity Federation
-- **CI/CD:** GitHub Actions (lint/type/test/tf-validate/docker-build on every PR; build+push+`terraform apply` on `main`/tags via OIDC)
+- **Infra:** Terraform ≥ 1.5 → Cloud Run, Artifact Registry, Secret Manager, IAM, Workload Identity Federation
+- **CI/CD:** GitHub Actions — `develop` → dev env, `main` → prod env, manual dispatch → staging. OIDC via WIF, no static keys.
 
 ## Endpoints
 
@@ -59,9 +59,9 @@ The whole bootstrap is automated. Prereqs:
 
 - `gcloud auth login && gcloud auth application-default login`
 - `gcloud config set project <PROJECT_ID>` (e.g. `chatbot-andela`)
-- `terraform >= 1.10` installed
-- `gh` CLI authenticated (optional — used to push GitHub Variables for OIDC)
-- `.env` populated with the secret values you want stored in Secret Manager
+- `terraform >= 1.5` installed
+- `gh` CLI authenticated (optional — used to push GitHub Actions creds for OIDC)
+- `.env` populated with the secret values you want pushed into Secret Manager
 
 Then:
 
@@ -73,13 +73,15 @@ make tf-up ENV=dev
 
 1. Detect `project_id`, `project_number`, `github_repository` automatically.
 2. Create the GCS Terraform state bucket (`<project_id>-tf-state`) if missing.
-3. Read secret values from `.env` and pass them to Terraform via `TF_VAR_secret_values`.
-4. `terraform init` + `apply` — provisions WIF pool/provider, deployer + runtime service accounts, Artifact Registry, Secret Manager secrets, and a Cloud Run service running a placeholder image (real image rolls in on the next CI deploy).
-5. Push the six GitHub Actions Variables (`GCP_PROJECT_ID`, `GCP_PROJECT_NUMBER`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOYER_SERVICE_ACCOUNT`, `TF_STATE_BUCKET`) into your repo via `gh` — these are what `.github/workflows/deploy.yml` uses for OIDC auth.
+3. Read secret values from `.env` and write them to Secret Manager via `gcloud secrets create / versions add` — Terraform never sees the plaintexts; it only references the secrets by name.
+4. `terraform init` + `apply` — provisions WIF pool/provider, deployer + runtime service accounts, Artifact Registry, Cloud Run service (placeholder image until CI builds the real one), and the IAM bindings.
+5. Push the GitHub Actions credentials, scoped to the `${ENV}` environment so dev/staging/prod don't clobber each other:
+   - `GCP_WORKLOAD_IDENTITY_PROVIDER` → environment Secret
+   - `GCP_DEPLOYER_SERVICE_ACCOUNT`, `GCP_PROJECT_ID`, `GCP_PROJECT_NUMBER`, `GCP_REGION`, `TF_STATE_BUCKET` → environment Variables
 
-After that, push to `main` and CI takes over: build → push to Artifact Registry → `terraform apply` → Cloud Run rollout. No service-account JSON keys exist anywhere.
+After that, push to `develop` (deploys to dev) or `main` (deploys to prod). CI builds the image, pushes it to Artifact Registry, and runs `terraform apply -target=google_cloud_run_v2_service.app -refresh=false` — narrow scope so the deployer SA can stay least-privilege. No service-account JSON keys exist anywhere.
 
-If you don't have `gh` installed, the script prints the variables instead — paste them into Settings → Secrets and variables → Actions → Variables.
+If `gh` isn't installed/authenticated, the script prints the variables instead — paste them into Settings → Environments → `${ENV}`.
 
 ## Layout
 
