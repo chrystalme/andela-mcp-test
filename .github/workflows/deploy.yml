@@ -103,4 +103,5 @@ jobs:
           terraform apply -auto-approve \
             -refresh=false \
             -var-file="envs/${ENVIRONMENT}.tfvars.example" \
-            -target=google_cloud_run_v2_service.app
+            -target=google_cloud_run_v2_service.app \
+            -target=google_cloud_run_v2_service_iam_member.public

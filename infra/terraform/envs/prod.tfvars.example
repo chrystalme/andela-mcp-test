@@ -21,6 +21,4 @@ secrets = {
   ANDELA_MCP_OPENAI_API_KEY = "andela-mcp-prod-andela-mcp-openai-api-key"
 }
 
-# Prod is private by default. Flip to true and re-apply via `make tf-up ENV=prod`
-# to expose the public chat widget at the prod URL.
-allow_unauthenticated = false
+allow_unauthenticated = true

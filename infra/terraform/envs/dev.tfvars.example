@@ -23,4 +23,4 @@ secrets = {
   # ANDELA_MCP_REMOTE_TOKEN = "andela-mcp-dev-andela-mcp-remote-token"
 }
 
-allow_unauthenticated = false
+allow_unauthenticated = true

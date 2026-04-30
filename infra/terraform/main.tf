@@ -146,9 +146,12 @@ resource "google_service_account_iam_member" "deployer_act_as_runtime" {
 }
 
 resource "google_cloud_run_v2_service" "app" {
-  project             = var.project_id
-  location            = var.region
-  name                = "${var.service_name}-${var.environment}"
+  project  = var.project_id
+  location = var.region
+  # Drop the env suffix from prod's service name so the URL is
+  # `${service_name}-<hash>.run.app` instead of `${service_name}-prod-...`.
+  # Other envs (dev, staging) keep the suffix.
+  name                = var.environment == "prod" ? var.service_name : "${var.service_name}-${var.environment}"
   ingress             = "INGRESS_TRAFFIC_ALL"
   labels              = local.labels
   deletion_protection = false
