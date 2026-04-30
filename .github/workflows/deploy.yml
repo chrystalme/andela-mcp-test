@@ -2,14 +2,13 @@ name: deploy
 
 on:
   push:
-    branches: [main]
-    tags: ["v*"]
+    branches: [main, develop]
   workflow_dispatch:
     inputs:
       environment:
         description: Target environment
         required: true
-        default: dev
+        default: staging
         type: choice
         options: [dev, staging, prod]
 
@@ -17,18 +16,24 @@ permissions:
   contents: read
   id-token: write  # required for Workload Identity Federation
 
+# Branch ⇒ env mapping:
+#   push to main    → prod
+#   push to develop → dev
+#   workflow_dispatch → user-chosen (default staging)
+# Computed once and reused via env.ENVIRONMENT below; environment: must repeat
+# the same expression because env.* isn't available in `environment:`.
 concurrency:
-  group: deploy-${{ github.event.inputs.environment || 'dev' }}
+  group: deploy-${{ github.event.inputs.environment || (github.ref_name == 'main' && 'prod') || (github.ref_name == 'develop' && 'dev') || 'staging' }}
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || 'dev' }}
+    environment: ${{ github.event.inputs.environment || (github.ref_name == 'main' && 'prod') || (github.ref_name == 'develop' && 'dev') || 'staging' }}
 
     env:
       TF_IN_AUTOMATION: "1"
-      ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+      ENVIRONMENT: ${{ github.event.inputs.environment || (github.ref_name == 'main' && 'prod') || (github.ref_name == 'develop' && 'dev') || 'staging' }}
 
     steps:
       - uses: actions/checkout@v4
