@@ -108,9 +108,11 @@ cd "$TF_DIR"
 
 # Auto-create envs/<env>.tfvars from the example if missing, with project_id pre-filled.
 TFVARS="envs/${ENV}.tfvars"
+EXAMPLE="envs/${ENV}.tfvars.example"
+[ -f "$EXAMPLE" ] || { red "  $EXAMPLE not found — create it before bootstrapping ENV=$ENV"; exit 1; }
 if [ ! -f "$TFVARS" ]; then
-  cp "envs/dev.tfvars.example" "$TFVARS"
-  yellow "  generated $TFVARS from dev.tfvars.example — review before re-running"
+  cp "$EXAMPLE" "$TFVARS"
+  yellow "  generated $TFVARS from $EXAMPLE — review before re-running"
 fi
 
 terraform init -reconfigure \
