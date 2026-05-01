@@ -3,7 +3,7 @@
 # so they're omitted here.
 region        = "us-central1"
 environment   = "prod"
-min_instances = 1            # warm to avoid cold-start latency on real traffic
+min_instances = 1 # warm to avoid cold-start latency on real traffic
 max_instances = 10
 cpu           = "2"
 memory        = "1Gi"
