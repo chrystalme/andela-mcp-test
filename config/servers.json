@@ -8,5 +8,6 @@
         "Authorization": "Bearer ${ANDELA_MCP_REMOTE_TOKEN}"
       }
     }
-  ]
+  ],
+  "_comment": "Headers with `${VAR}` are expanded at startup. If the referenced env var is unset, the entry is dropped (so an unauthenticated upstream like order-mcp works fine without ANDELA_MCP_REMOTE_TOKEN being set)."
 }

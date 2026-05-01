@@ -49,16 +49,43 @@ class MCPToolError(RuntimeError):
     """Raised when an upstream MCP tool call returns an error result."""
 
 
-def _expand_env_vars(value: Any) -> Any:
-    """Substitute ${VAR} placeholders against the process environment.
+def _expand_str(value: str) -> str | None:
+    """Expand ${VAR} placeholders in `value`. If ANY referenced env var is
+    unset OR resolves to empty, return None — the caller can drop the whole
+    entry. This avoids producing nonsense like "Bearer " for an unset token,
+    which httpx rejects as an Illegal header value.
+    """
+    if "${" not in value:
+        return value
+    refs = _ENV_VAR_PATTERN.findall(value)
+    for var in refs:
+        if not os.environ.get(var):
+            return None
+    return _ENV_VAR_PATTERN.sub(lambda m: os.environ[m.group(1)], value)
 
-    Recurses into dict/list values. Unset variables become empty strings; the
-    caller is expected to validate that critical secrets aren't blank.
+
+def _expand_env_vars(value: Any) -> Any:
+    """Recurse through `value` and expand ${VAR} placeholders.
+
+    Strings whose template references an unset env var are replaced with `""`
+    at the top level, OR cause their containing dict entry to be dropped (so
+    headers like `{"Authorization": "Bearer ${UNSET}"}` produce a header-less
+    request rather than a malformed one).
     """
     if isinstance(value, str):
-        return _ENV_VAR_PATTERN.sub(lambda m: os.environ.get(m.group(1), ""), value)
+        expanded = _expand_str(value)
+        return expanded if expanded is not None else ""
     if isinstance(value, dict):
-        return {k: _expand_env_vars(v) for k, v in value.items()}
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if isinstance(v, str):
+                expanded = _expand_str(v)
+                if expanded is None:
+                    continue  # one or more referenced env vars unset → drop the entry
+                out[k] = expanded
+            else:
+                out[k] = _expand_env_vars(v)
+        return out
     if isinstance(value, list):
         return [_expand_env_vars(v) for v in value]
     return value

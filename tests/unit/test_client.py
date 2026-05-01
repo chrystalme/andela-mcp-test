@@ -55,6 +55,57 @@ def test_load_server_configs_invalid_schema_raises(tmp_path: Path) -> None:
         load_server_configs(path)
 
 
+def test_load_server_configs_expands_set_env_var(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MCP_TEST_TOKEN", "abc123")
+    path = tmp_path / "servers.json"
+    path.write_text(
+        json.dumps(
+            {
+                "servers": [
+                    {
+                        "name": "remote",
+                        "transport": "http",
+                        "url": "https://example.com/mcp",
+                        "headers": {"Authorization": "Bearer ${MCP_TEST_TOKEN}"},
+                    }
+                ]
+            }
+        )
+    )
+    configs = load_server_configs(path)
+    assert configs[0].headers == {"Authorization": "Bearer abc123"}
+
+
+def test_load_server_configs_drops_header_when_referenced_var_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MCP_TEST_TOKEN", raising=False)
+    path = tmp_path / "servers.json"
+    path.write_text(
+        json.dumps(
+            {
+                "servers": [
+                    {
+                        "name": "remote",
+                        "transport": "http",
+                        "url": "https://example.com/mcp",
+                        "headers": {
+                            "Authorization": "Bearer ${MCP_TEST_TOKEN}",
+                            "X-Static": "hello",
+                        },
+                    }
+                ]
+            }
+        )
+    )
+    configs = load_server_configs(path)
+    # The Authorization header is dropped (would have been "Bearer " — illegal),
+    # but the static header survives.
+    assert configs[0].headers == {"X-Static": "hello"}
+
+
 def test_client_session_unavailable_before_connect() -> None:
     client = MCPClient(MCPServerConfig(name="fs", transport=MCPTransport.STDIO, command="echo"))
     with pytest.raises(RuntimeError, match="not connected"):
