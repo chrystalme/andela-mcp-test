@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -8,8 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -17,10 +19,12 @@ from slowapi.util import get_remote_address
 
 from andela_mcp import __version__
 from andela_mcp.chat import (
+    DEFAULT_PRINCIPAL,
     MAX_HISTORY_MESSAGES,
     ChatMessage,
     ChatReply,
     ChatService,
+    Principal,
     build_chat_service,
 )
 from andela_mcp.client import (
@@ -42,6 +46,30 @@ _CHAT_RATE_LIMIT = "10/minute"  # per remote IP
 # at import time. The Limiter instance is also bound to app.state in create_app.
 limiter = Limiter(key_func=get_remote_address)
 
+# auto_error=False so we can return a structured 401 instead of FastAPI's default 403.
+_admin_bearer = HTTPBearer(auto_error=False)
+
+
+async def require_admin(
+    request: Request,
+    creds: HTTPAuthorizationCredentials | None = Depends(_admin_bearer),  # noqa: B008
+) -> None:
+    """Gate admin routes behind ANDELA_MCP_ADMIN_TOKEN. Fail-closed if unset."""
+    settings: Settings = request.app.state.settings
+    expected = settings.admin_token
+    if expected is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="admin auth not configured: set ANDELA_MCP_ADMIN_TOKEN",
+        )
+    presented = creds.credentials if creds is not None else ""
+    if not hmac.compare_digest(presented, expected.get_secret_value()):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid or missing admin bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
 
 class ToolCallRequest(BaseModel):
     server: str
@@ -57,6 +85,7 @@ class ToolCallResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=MAX_HISTORY_MESSAGES)
+    principal: Principal = DEFAULT_PRINCIPAL
 
 
 @asynccontextmanager
@@ -175,7 +204,7 @@ async def _chat(request: Request, req: ChatRequest) -> ChatReply:
             detail="chat is unavailable: ANDELA_MCP_GROQ_API_KEY not configured",
         )
     try:
-        return await chat_service.respond(req.messages)
+        return await chat_service.respond(req.messages, principal=req.principal)
     except Exception as exc:
         log.exception("chat_failed")
         raise HTTPException(status_code=502, detail=f"chat failed: {exc}") from exc
@@ -233,9 +262,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.add_api_route("/healthz", _healthz, methods=["GET"])
     app.add_api_route("/readyz", _readyz, methods=["GET"])
-    app.add_api_route("/v1/tools", _list_tools, methods=["GET"])
     app.add_api_route(
-        "/v1/tools/call", _call_tool, methods=["POST"], response_model=ToolCallResponse
+        "/v1/tools",
+        _list_tools,
+        methods=["GET"],
+        dependencies=[Depends(require_admin)],
+    )
+    app.add_api_route(
+        "/v1/tools/call",
+        _call_tool,
+        methods=["POST"],
+        response_model=ToolCallResponse,
+        dependencies=[Depends(require_admin)],
     )
     app.add_api_route("/v1/chat", _chat, methods=["POST"], response_model=ChatReply)
 

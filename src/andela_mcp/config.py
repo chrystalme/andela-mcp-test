@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     llm_model: str = "openai/gpt-oss-120b"
 
+    admin_token: SecretStr | None = None
+
     gcp_project_id: str | None = None
 
     servers_config_path: Path = Path("config/servers.json")

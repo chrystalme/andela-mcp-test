@@ -36,6 +36,18 @@ _DEFAULT_INSTRUCTIONS = (
 MAX_MESSAGE_CHARS = 8000
 MAX_HISTORY_MESSAGES = 50
 
+# Who is talking to the chatbot. The frontend asserts this on behalf of its
+# authenticated session; the gateway trusts it (frontend ↔ gateway is m2m auth).
+# Tool exposure is scoped per principal in build_function_tools.
+Principal = Literal["anonymous", "customer", "staff"]
+DEFAULT_PRINCIPAL: Principal = "anonymous"
+
+# Qualified `server__tool` names exposed to the `anonymous` principal. Empty by
+# default — populate with the read-only tools you want public visitors to reach
+# (e.g. {"remote-mcp__list_products", "remote-mcp__verify_customer_pin"}).
+# `customer` and `staff` always see the full catalog.
+ANONYMOUS_ALLOWED_TOOLS: frozenset[str] = frozenset()
+
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
@@ -90,11 +102,20 @@ def _ensure_object_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
 async def build_function_tools(
     clients: dict[str, _MCPClientProto],
     traces: list[ToolCallTrace],
+    *,
+    principal: Principal = DEFAULT_PRINCIPAL,
 ) -> list[Tool]:
-    """Wrap every MCP tool from every server as a FunctionTool that records traces."""
+    """Wrap every MCP tool from every server as a FunctionTool that records traces.
+
+    `principal` scopes the visible toolset: anonymous callers only see tools
+    listed in ANONYMOUS_ALLOWED_TOOLS; customer and staff see the full catalog.
+    """
     tools: list[Tool] = []
     for server, client in clients.items():
         for t in await client.list_tools():
+            qualified = _qualify(server, t["name"])
+            if principal == "anonymous" and qualified not in ANONYMOUS_ALLOWED_TOOLS:
+                continue
             schema = _ensure_object_schema(t.get("inputSchema"))
             tools.append(_make_function_tool(server, client, t, schema, traces))
     return tools
@@ -159,9 +180,13 @@ class ChatService:
         )
         self._model = OpenAIChatCompletionsModel(model=model, openai_client=self._openai_client)
 
-    async def respond(self, history: list[ChatMessage]) -> ChatReply:
+    async def respond(
+        self,
+        history: list[ChatMessage],
+        principal: Principal = DEFAULT_PRINCIPAL,
+    ) -> ChatReply:
         traces: list[ToolCallTrace] = []
-        tools = await build_function_tools(self._clients, traces)
+        tools = await build_function_tools(self._clients, traces, principal=principal)
         agent: Agent[Any] = Agent(
             name="andela-mcp-chat",
             instructions=self._instructions,

@@ -63,7 +63,7 @@ async def test_build_function_tools_qualifies_names_and_invokes_mcp() -> None:
         tools=[{"name": "read_file", "description": "", "inputSchema": {"type": "object"}}],
     )
     traces: list[ToolCallTrace] = []
-    tools = await build_function_tools({"shop": shop, "fs": fs}, traces)
+    tools = await build_function_tools({"shop": shop, "fs": fs}, traces, principal="staff")
 
     names = {t.name for t in tools}
     assert names == {"shop__list_products", "fs__read_file"}
@@ -83,7 +83,7 @@ async def test_function_tool_records_mcp_error_as_string() -> None:
         errors={"create_order": MCPToolError("out of stock")},
     )
     traces: list[ToolCallTrace] = []
-    tools = await build_function_tools({"shop": shop}, traces)
+    tools = await build_function_tools({"shop": shop}, traces, principal="staff")
     out = await tools[0].on_invoke_tool(None, "{}")  # type: ignore[arg-type]
     assert out.startswith("error:")
     assert traces[0].result is None
@@ -122,7 +122,9 @@ async def test_respond_uses_runner_and_returns_traces(monkeypatch: pytest.Monkey
         model="openai/gpt-oss-120b",
         max_turns=5,
     )
-    reply = await svc.respond([ChatMessage(role="user", content="show products")])
+    reply = await svc.respond(
+        [ChatMessage(role="user", content="show products")], principal="staff"
+    )
 
     assert isinstance(reply, ChatReply)
     assert reply.reply == "Here are the products."
@@ -130,3 +132,81 @@ async def test_respond_uses_runner_and_returns_traces(monkeypatch: pytest.Monkey
     assert reply.tool_calls[0].tool == "list_products"
     assert captured["max_turns"] == 5
     assert captured["input"] == [{"role": "user", "content": "show products"}]
+
+
+@pytest.mark.asyncio
+async def test_build_function_tools_anonymous_hides_tools_not_in_allowlist() -> None:
+    """Default ANONYMOUS_ALLOWED_TOOLS is empty — anonymous callers get nothing."""
+    shop = _StubMCPClient(
+        tools=[
+            {"name": "list_products", "description": "x", "inputSchema": {"type": "object"}},
+            {"name": "list_orders", "description": "x", "inputSchema": {"type": "object"}},
+        ],
+    )
+    traces: list[ToolCallTrace] = []
+    tools = await build_function_tools({"shop": shop}, traces, principal="anonymous")
+    assert tools == []
+
+
+@pytest.mark.asyncio
+async def test_build_function_tools_anonymous_exposes_only_allowlisted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from andela_mcp import chat as chat_mod
+
+    monkeypatch.setattr(chat_mod, "ANONYMOUS_ALLOWED_TOOLS", frozenset({"shop__list_products"}))
+    shop = _StubMCPClient(
+        tools=[
+            {"name": "list_products", "description": "x", "inputSchema": {"type": "object"}},
+            {"name": "list_orders", "description": "x", "inputSchema": {"type": "object"}},
+        ],
+    )
+    traces: list[ToolCallTrace] = []
+    tools = await build_function_tools({"shop": shop}, traces, principal="anonymous")
+    assert {t.name for t in tools} == {"shop__list_products"}
+
+
+@pytest.mark.asyncio
+async def test_build_function_tools_customer_and_staff_see_full_catalog() -> None:
+    shop = _StubMCPClient(
+        tools=[
+            {"name": "list_products", "description": "x", "inputSchema": {"type": "object"}},
+            {"name": "list_orders", "description": "x", "inputSchema": {"type": "object"}},
+        ],
+    )
+    for principal in ("customer", "staff"):
+        traces: list[ToolCallTrace] = []
+        tools = await build_function_tools({"shop": shop}, traces, principal=principal)  # type: ignore[arg-type]
+        assert {t.name for t in tools} == {"shop__list_products", "shop__list_orders"}
+
+
+@pytest.mark.asyncio
+async def test_respond_forwards_principal_to_build_function_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shop = _StubMCPClient(
+        tools=[{"name": "list_products", "description": "x", "inputSchema": {"type": "object"}}],
+    )
+    seen: dict[str, Any] = {}
+
+    from andela_mcp import chat as chat_mod
+
+    real_build = chat_mod.build_function_tools
+
+    async def spy_build(*args: Any, **kwargs: Any) -> Any:
+        seen["principal"] = kwargs.get("principal")
+        return await real_build(*args, **kwargs)
+
+    monkeypatch.setattr(chat_mod, "build_function_tools", spy_build)
+
+    async def fake_run(agent: Any, *, input: Any, max_turns: int) -> Any:
+        class _R:
+            final_output = "ok"
+
+        return _R()
+
+    monkeypatch.setattr(chat_mod.Runner, "run", staticmethod(fake_run))
+
+    svc = ChatService(clients={"shop": shop}, groq_api_key="gk-test", model="x")
+    await svc.respond([ChatMessage(role="user", content="hi")], principal="customer")
+    assert seen["principal"] == "customer"
