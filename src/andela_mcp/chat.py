@@ -42,19 +42,26 @@ _PRINCIPAL_RANK: dict[Principal, int] = {"anonymous": 0, "customer": 1, "staff":
 
 # Maps qualified `server__tool` name → minimum principal authorized to call it.
 # Tools NOT listed here are staff-only (default-deny).
+#
+# Note: the order tools (list_orders, get_order, create_order) are listed at
+# `anonymous` so the model can SEE them from the start and plan the
+# verify-then-list flow. They are runtime-gated by CUSTOMER_SCOPING below: any
+# non-staff caller must successfully call verify_customer_pin in the same
+# /v1/chat invocation before the order tools execute, and results are then
+# row-scoped to the verified customer_id. Staff bypasses the gate.
 TOOL_MIN_PRINCIPAL: dict[str, Principal] = {
     # Public catalog
     "remote-mcp__list_products": "anonymous",
     "remote-mcp__get_product": "anonymous",
     "remote-mcp__search_products": "anonymous",
-    # In-chat identity verification (rate-limited 10/min per IP at the chat endpoint)
+    # In-chat identity verification — anonymous callers use this to "log in"
+    # mid-conversation, which unlocks the order tools below.
     "remote-mcp__verify_customer_pin": "anonymous",
-    # Customer reads & writes — the gateway scopes these (see CUSTOMER_SCOPING)
-    # so that `customer` callers can only see/affect rows tied to the
-    # customer_id captured from their successful verify_customer_pin call.
-    "remote-mcp__list_orders": "customer",
-    "remote-mcp__get_order": "customer",
-    "remote-mcp__create_order": "customer",
+    # Order tools — visible to anonymous + customer, but gated by the runtime
+    # CUSTOMER_SCOPING wrapper (no scoping for staff).
+    "remote-mcp__list_orders": "anonymous",
+    "remote-mcp__get_order": "anonymous",
+    "remote-mcp__create_order": "anonymous",
     # Admin only — system-wide reads (out of scope for current testing)
     "remote-mcp__get_customer": "staff",
 }
@@ -76,11 +83,13 @@ def _principal_can_call(principal: Principal, qualified_tool: str) -> bool:
 #
 # 1. verify_customer_pin: when it returns success, the gateway parses the
 #    response and stores the verified customer_id on a per-/v1/chat-call
-#    `_ChatSession`.
-# 2. list_orders / get_order / create_order (only when principal == "customer"):
+#    `_ChatSession`. This is the "login" step that elevates an anonymous
+#    caller into the customer-data scope.
+# 2. list_orders / get_order / create_order (for any non-staff principal):
 #    refuse to run if no customer_id is captured ("verify first"); inject
 #    customer_id into args when the upstream accepts it; post-filter the
 #    response so only rows owned by the verified customer are returned.
+#    Staff principal bypasses the gate entirely (admin sees everything).
 #
 # This is single-turn enforcement — session state resets between /v1/chat
 # calls. Multi-turn flows require the client to re-verify (or a future
@@ -211,6 +220,15 @@ def _filter_content_single(mcp_result: Any, customer_id: str, field_name: str) -
 # Instructions are chosen per principal so the prompt never references tools
 # the caller can't actually invoke (that produces hallucinated tool calls and
 # 400s from the upstream model).
+# The store has no separate cart entity — pending/draft orders are the cart.
+# Every prompt below tells the model to map cart/basket language to list_orders
+# (filtered by draft / pending status when appropriate).
+_CART_NOTE = (
+    "There is no separate cart concept — treat any mention of 'cart', 'basket', "
+    "'pending items', or 'what's in my cart' as a request for the user's draft / "
+    "unsubmitted orders via list_orders (filter for status='draft' or similar)."
+)
+
 _INSTRUCTIONS_CUSTOMER = (
     "You are a helpful customer service assistant for an online electronics store. "
     "You ALWAYS verify the customer first with verify_customer_pin(email, pin) "
@@ -218,20 +236,22 @@ _INSTRUCTIONS_CUSTOMER = (
     "require verification and only act on the verified customer's own data. "
     "If the user asks about orders before providing their email and PIN, ask "
     "for them. Use list_products / search_products / get_product for catalog "
-    "questions. Keep replies concise."
+    f"questions. {_CART_NOTE} Keep replies concise."
 )
 _INSTRUCTIONS_STAFF = (
     "You are an internal admin assistant for an online electronics store with "
     "full access to system-wide data (all customers, all orders). Use the "
-    "provided tools to look up any customer, order, or product. Keep replies concise."
+    f"provided tools to look up any customer, order, or product. {_CART_NOTE} "
+    "Keep replies concise."
 )
 _INSTRUCTIONS_ANONYMOUS = (
-    "You are a helpful product assistant for an online electronics store. "
-    "Answer general questions about products and store policies from your own "
-    "knowledge. You do NOT have any tools available — do not attempt to call "
-    "any. You cannot access customer accounts, orders, or any personal data. "
-    "If a user asks about their orders or account, ask them to sign in first. "
-    "Keep replies concise."
+    "You are a helpful customer service assistant for an online electronics store. "
+    "You can answer product questions using list_products / get_product / "
+    "search_products. To help a guest with their orders or to place an order, "
+    "first verify their identity with verify_customer_pin(email, pin) — once "
+    "verified, list_orders / get_order / create_order will be scoped to that "
+    "customer. If the user asks about orders or wants to place one and hasn't "
+    f"given their email and PIN, ask for them. {_CART_NOTE} Keep replies concise."
 )
 
 
@@ -336,7 +356,9 @@ def _make_function_tool(
     description = (tool_def.get("description") or "").strip() or qualified
 
     captures_customer = qualified == _VERIFY_TOOL
-    scope: _ScopeSpec | None = CUSTOMER_SCOPING.get(qualified) if principal == "customer" else None
+    # Staff sees everything system-wide; anyone else who hits an order tool
+    # must verify first and gets row-scoped to their own customer_id.
+    scope: _ScopeSpec | None = CUSTOMER_SCOPING.get(qualified) if principal != "staff" else None
 
     async def on_invoke(_ctx: RunContextWrapper[Any], args_json: str) -> str:
         args: dict[str, Any] = json.loads(args_json) if args_json else {}
