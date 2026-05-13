@@ -336,9 +336,7 @@ def _make_function_tool(
     description = (tool_def.get("description") or "").strip() or qualified
 
     captures_customer = qualified == _VERIFY_TOOL
-    scope: _ScopeSpec | None = (
-        CUSTOMER_SCOPING.get(qualified) if principal == "customer" else None
-    )
+    scope: _ScopeSpec | None = CUSTOMER_SCOPING.get(qualified) if principal == "customer" else None
 
     async def on_invoke(_ctx: RunContextWrapper[Any], args_json: str) -> str:
         args: dict[str, Any] = json.loads(args_json) if args_json else {}

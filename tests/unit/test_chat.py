@@ -264,9 +264,7 @@ async def test_customer_get_order_returns_not_found_when_other_customer() -> Non
             {"name": "get_order", "description": "x", "inputSchema": {"type": "object"}},
         ],
         results={
-            "verify_customer_pin": [
-                {"type": "text", "text": json.dumps({"customer_id": "c-42"})}
-            ],
+            "verify_customer_pin": [{"type": "text", "text": json.dumps({"customer_id": "c-42"})}],
             "get_order": [
                 {
                     "type": "text",
@@ -298,9 +296,7 @@ async def test_customer_create_order_overrides_customer_id_argument() -> None:
             {"name": "create_order", "description": "x", "inputSchema": {"type": "object"}},
         ],
         results={
-            "verify_customer_pin": [
-                {"type": "text", "text": json.dumps({"customer_id": "c-42"})}
-            ],
+            "verify_customer_pin": [{"type": "text", "text": json.dumps({"customer_id": "c-42"})}],
         },
     )
     traces: list[ToolCallTrace] = []
