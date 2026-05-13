@@ -135,8 +135,8 @@ async def test_respond_uses_runner_and_returns_traces(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.asyncio
-async def test_build_function_tools_anonymous_hides_tools_not_in_allowlist() -> None:
-    """Default ANONYMOUS_ALLOWED_TOOLS is empty — anonymous callers get nothing."""
+async def test_build_function_tools_default_deny_for_unmapped_tools() -> None:
+    """Default TOOL_MIN_PRINCIPAL is empty — every tool is staff-only by default."""
     shop = _StubMCPClient(
         tools=[
             {"name": "list_products", "description": "x", "inputSchema": {"type": "object"}},
@@ -144,40 +144,252 @@ async def test_build_function_tools_anonymous_hides_tools_not_in_allowlist() -> 
         ],
     )
     traces: list[ToolCallTrace] = []
-    tools = await build_function_tools({"shop": shop}, traces, principal="anonymous")
-    assert tools == []
+    assert await build_function_tools({"shop": shop}, traces, principal="anonymous") == []
+    assert await build_function_tools({"shop": shop}, traces, principal="customer") == []
+    staff_tools = await build_function_tools({"shop": shop}, traces, principal="staff")
+    assert {t.name for t in staff_tools} == {"shop__list_products", "shop__list_orders"}
 
 
 @pytest.mark.asyncio
-async def test_build_function_tools_anonymous_exposes_only_allowlisted(
+async def test_build_function_tools_hierarchical_access(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """anonymous < customer < staff. Each principal sees their tier and below."""
     from andela_mcp import chat as chat_mod
 
-    monkeypatch.setattr(chat_mod, "ANONYMOUS_ALLOWED_TOOLS", frozenset({"shop__list_products"}))
+    monkeypatch.setattr(
+        chat_mod,
+        "TOOL_MIN_PRINCIPAL",
+        {
+            "shop__list_products": "anonymous",
+            "shop__list_my_orders": "customer",
+            "shop__list_orders": "staff",
+        },
+    )
     shop = _StubMCPClient(
         tools=[
             {"name": "list_products", "description": "x", "inputSchema": {"type": "object"}},
+            {"name": "list_my_orders", "description": "x", "inputSchema": {"type": "object"}},
             {"name": "list_orders", "description": "x", "inputSchema": {"type": "object"}},
         ],
     )
-    traces: list[ToolCallTrace] = []
-    tools = await build_function_tools({"shop": shop}, traces, principal="anonymous")
-    assert {t.name for t in tools} == {"shop__list_products"}
+
+    async def names_for(principal: str) -> set[str]:
+        traces: list[ToolCallTrace] = []
+        tools = await build_function_tools({"shop": shop}, traces, principal=principal)  # type: ignore[arg-type]
+        return {t.name for t in tools}
+
+    assert await names_for("anonymous") == {"shop__list_products"}
+    assert await names_for("customer") == {"shop__list_products", "shop__list_my_orders"}
+    assert await names_for("staff") == {
+        "shop__list_products",
+        "shop__list_my_orders",
+        "shop__list_orders",
+    }
 
 
 @pytest.mark.asyncio
-async def test_build_function_tools_customer_and_staff_see_full_catalog() -> None:
+async def test_customer_order_tool_blocked_until_verify() -> None:
+    """Customer principal calling list_orders without prior verify_customer_pin
+    must be refused at the gateway — never reaches the upstream."""
+    server = "remote-mcp"
+    upstream = _StubMCPClient(
+        tools=[
+            {"name": "list_orders", "description": "x", "inputSchema": {"type": "object"}},
+            {"name": "verify_customer_pin", "description": "x", "inputSchema": {"type": "object"}},
+        ],
+    )
+    traces: list[ToolCallTrace] = []
+    tools = await build_function_tools({server: upstream}, traces, principal="customer")
+    list_orders = next(t for t in tools if t.name == "remote-mcp__list_orders")
+
+    out = await list_orders.on_invoke_tool(None, "{}")  # type: ignore[arg-type]
+    assert "verify your identity" in out
+    assert upstream.calls == []  # upstream never called
+
+
+@pytest.mark.asyncio
+async def test_customer_verify_captures_id_then_list_orders_is_scoped() -> None:
+    """End-to-end customer flow: verify → capture customer_id → list_orders
+    gets the id injected and the returned rows are filtered to that customer."""
+    server = "remote-mcp"
+    upstream = _StubMCPClient(
+        tools=[
+            {"name": "verify_customer_pin", "description": "x", "inputSchema": {"type": "object"}},
+            {"name": "list_orders", "description": "x", "inputSchema": {"type": "object"}},
+        ],
+        results={
+            "verify_customer_pin": [
+                {"type": "text", "text": json.dumps({"verified": True, "customer_id": "c-42"})}
+            ],
+            "list_orders": [
+                {
+                    "type": "text",
+                    "text": json.dumps(
+                        [
+                            {"order_id": "o-1", "customer_id": "c-42", "total": 10},
+                            {"order_id": "o-2", "customer_id": "c-99", "total": 20},
+                            {"order_id": "o-3", "customer_id": "c-42", "total": 30},
+                        ]
+                    ),
+                }
+            ],
+        },
+    )
+    traces: list[ToolCallTrace] = []
+    tools = await build_function_tools({server: upstream}, traces, principal="customer")
+    verify = next(t for t in tools if t.name == "remote-mcp__verify_customer_pin")
+    list_orders = next(t for t in tools if t.name == "remote-mcp__list_orders")
+
+    await verify.on_invoke_tool(  # type: ignore[arg-type]
+        None, json.dumps({"email": "x@y.com", "pin": "1234"})
+    )
+
+    out = await list_orders.on_invoke_tool(None, "{}")  # type: ignore[arg-type]
+    # Upstream got customer_id injected
+    assert upstream.calls[-1] == ("list_orders", {"customer_id": "c-42"})
+    # Output only contains c-42 rows
+    parsed = json.loads(out)
+    assert {row["order_id"] for row in parsed} == {"o-1", "o-3"}
+
+
+@pytest.mark.asyncio
+async def test_customer_get_order_returns_not_found_when_other_customer() -> None:
+    """get_order doesn't accept customer_id — gateway must post-check the
+    returned order's owner and hide it if it isn't the verified customer's."""
+    server = "remote-mcp"
+    upstream = _StubMCPClient(
+        tools=[
+            {"name": "verify_customer_pin", "description": "x", "inputSchema": {"type": "object"}},
+            {"name": "get_order", "description": "x", "inputSchema": {"type": "object"}},
+        ],
+        results={
+            "verify_customer_pin": [{"type": "text", "text": json.dumps({"customer_id": "c-42"})}],
+            "get_order": [
+                {
+                    "type": "text",
+                    "text": json.dumps({"order_id": "o-stolen", "customer_id": "c-99"}),
+                }
+            ],
+        },
+    )
+    traces: list[ToolCallTrace] = []
+    tools = await build_function_tools({server: upstream}, traces, principal="customer")
+    verify = next(t for t in tools if t.name == "remote-mcp__verify_customer_pin")
+    get_order = next(t for t in tools if t.name == "remote-mcp__get_order")
+
+    await verify.on_invoke_tool(None, "{}")  # type: ignore[arg-type]
+    out = await get_order.on_invoke_tool(  # type: ignore[arg-type]
+        None, json.dumps({"order_id": "o-stolen"})
+    )
+    assert out == "not found"
+
+
+@pytest.mark.asyncio
+async def test_customer_create_order_overrides_customer_id_argument() -> None:
+    """If the model is tricked into passing a different customer_id, the
+    gateway overrides it with the verified one."""
+    server = "remote-mcp"
+    upstream = _StubMCPClient(
+        tools=[
+            {"name": "verify_customer_pin", "description": "x", "inputSchema": {"type": "object"}},
+            {"name": "create_order", "description": "x", "inputSchema": {"type": "object"}},
+        ],
+        results={
+            "verify_customer_pin": [{"type": "text", "text": json.dumps({"customer_id": "c-42"})}],
+        },
+    )
+    traces: list[ToolCallTrace] = []
+    tools = await build_function_tools({server: upstream}, traces, principal="customer")
+    verify = next(t for t in tools if t.name == "remote-mcp__verify_customer_pin")
+    create = next(t for t in tools if t.name == "remote-mcp__create_order")
+
+    await verify.on_invoke_tool(None, "{}")  # type: ignore[arg-type]
+    # Agent tries to pass a different customer_id — gateway must override.
+    await create.on_invoke_tool(  # type: ignore[arg-type]
+        None, json.dumps({"customer_id": "c-99-attacker", "items": []})
+    )
+    call_name, call_args = upstream.calls[-1]
+    assert call_name == "create_order"
+    assert call_args["customer_id"] == "c-42"
+
+
+@pytest.mark.asyncio
+async def test_anonymous_cannot_see_order_tools() -> None:
+    """Anonymous principal: order tools are simply not in the visible set."""
+    server = "remote-mcp"
+    upstream = _StubMCPClient(
+        tools=[
+            {"name": "list_products", "description": "x", "inputSchema": {"type": "object"}},
+            {"name": "verify_customer_pin", "description": "x", "inputSchema": {"type": "object"}},
+            {"name": "list_orders", "description": "x", "inputSchema": {"type": "object"}},
+            {"name": "get_order", "description": "x", "inputSchema": {"type": "object"}},
+            {"name": "create_order", "description": "x", "inputSchema": {"type": "object"}},
+        ],
+    )
+    traces: list[ToolCallTrace] = []
+    tools = await build_function_tools({server: upstream}, traces, principal="anonymous")
+    names = {t.name for t in tools}
+    assert "remote-mcp__list_orders" not in names
+    assert "remote-mcp__get_order" not in names
+    assert "remote-mcp__create_order" not in names
+    # But the public + verify tools ARE there
+    assert "remote-mcp__list_products" in names
+    assert "remote-mcp__verify_customer_pin" in names
+
+
+@pytest.mark.asyncio
+async def test_build_function_tools_unmapped_tool_is_staff_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tool absent from TOOL_MIN_PRINCIPAL is reachable only by staff."""
+    from andela_mcp import chat as chat_mod
+
+    monkeypatch.setattr(chat_mod, "TOOL_MIN_PRINCIPAL", {"shop__list_products": "anonymous"})
     shop = _StubMCPClient(
         tools=[
             {"name": "list_products", "description": "x", "inputSchema": {"type": "object"}},
-            {"name": "list_orders", "description": "x", "inputSchema": {"type": "object"}},
+            {"name": "secret_admin_tool", "description": "x", "inputSchema": {"type": "object"}},
         ],
     )
-    for principal in ("customer", "staff"):
+
+    async def names_for(principal: str) -> set[str]:
         traces: list[ToolCallTrace] = []
         tools = await build_function_tools({"shop": shop}, traces, principal=principal)  # type: ignore[arg-type]
-        assert {t.name for t in tools} == {"shop__list_products", "shop__list_orders"}
+        return {t.name for t in tools}
+
+    assert await names_for("customer") == {"shop__list_products"}  # admin tool hidden
+    assert "shop__secret_admin_tool" in await names_for("staff")
+
+
+@pytest.mark.asyncio
+async def test_anonymous_instructions_do_not_reference_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anonymous gets no tools, so the prompt must not mention any tool name —
+    otherwise the model hallucinates a tool call and Groq returns a 400."""
+    shop = _StubMCPClient(tools=[])
+    captured: dict[str, str] = {}
+
+    async def fake_run(agent: Any, *, input: Any, max_turns: int) -> Any:
+        captured["instructions"] = agent.instructions
+
+        class _R:
+            final_output = "hi"
+
+        return _R()
+
+    from andela_mcp import chat as chat_mod
+
+    monkeypatch.setattr(chat_mod.Runner, "run", staticmethod(fake_run))
+    svc = ChatService(clients={"shop": shop}, groq_api_key="gk-test", model="x")
+
+    await svc.respond([ChatMessage(role="user", content="hi")], principal="anonymous")
+    assert "verify_customer_pin" not in captured["instructions"]
+    assert "do NOT have any tools" in captured["instructions"]
+
+    await svc.respond([ChatMessage(role="user", content="hi")], principal="customer")
+    assert "verify_customer_pin" in captured["instructions"]
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 from agents import (
@@ -25,13 +26,6 @@ log = get_logger(__name__)
 
 _TOOL_NAME_SEPARATOR = "__"
 _DEFAULT_MAX_TURNS = 10
-_DEFAULT_INSTRUCTIONS = (
-    "You are a helpful customer service assistant for an online electronics store. "
-    "Use the provided tools to look up products, customers, and orders, and to "
-    "create orders. Before creating an order or revealing customer-specific data, "
-    "verify the customer's identity with verify_customer_pin. Keep replies concise."
-)
-
 
 MAX_MESSAGE_CHARS = 8000
 MAX_HISTORY_MESSAGES = 50
@@ -42,11 +36,211 @@ MAX_HISTORY_MESSAGES = 50
 Principal = Literal["anonymous", "customer", "staff"]
 DEFAULT_PRINCIPAL: Principal = "anonymous"
 
-# Qualified `server__tool` names exposed to the `anonymous` principal. Empty by
-# default — populate with the read-only tools you want public visitors to reach
-# (e.g. {"remote-mcp__list_products", "remote-mcp__verify_customer_pin"}).
-# `customer` and `staff` always see the full catalog.
-ANONYMOUS_ALLOWED_TOOLS: frozenset[str] = frozenset()
+# Hierarchical authorization: higher rank = more authority.
+# anonymous < customer < staff.
+_PRINCIPAL_RANK: dict[Principal, int] = {"anonymous": 0, "customer": 1, "staff": 2}
+
+# Maps qualified `server__tool` name → minimum principal authorized to call it.
+# Tools NOT listed here are staff-only (default-deny).
+TOOL_MIN_PRINCIPAL: dict[str, Principal] = {
+    # Public catalog
+    "remote-mcp__list_products": "anonymous",
+    "remote-mcp__get_product": "anonymous",
+    "remote-mcp__search_products": "anonymous",
+    # In-chat identity verification (rate-limited 10/min per IP at the chat endpoint)
+    "remote-mcp__verify_customer_pin": "anonymous",
+    # Customer reads & writes — the gateway scopes these (see CUSTOMER_SCOPING)
+    # so that `customer` callers can only see/affect rows tied to the
+    # customer_id captured from their successful verify_customer_pin call.
+    "remote-mcp__list_orders": "customer",
+    "remote-mcp__get_order": "customer",
+    "remote-mcp__create_order": "customer",
+    # Admin only — system-wide reads (out of scope for current testing)
+    "remote-mcp__get_customer": "staff",
+}
+
+
+def _principal_can_call(principal: Principal, qualified_tool: str) -> bool:
+    """True if `principal` has sufficient authority to invoke `qualified_tool`.
+
+    Default-deny: tools missing from TOOL_MIN_PRINCIPAL require `staff`."""
+    required: Principal = TOOL_MIN_PRINCIPAL.get(qualified_tool, "staff")
+    return _PRINCIPAL_RANK[principal] >= _PRINCIPAL_RANK[required]
+
+
+# ── customer-scoped tool wrapping ────────────────────────────────────────────
+#
+# The upstream order-mcp is not session-aware: list_orders returns every order
+# in the system regardless of the verify_customer_pin call. We cannot modify
+# the upstream, so the gateway enforces row-level scoping itself:
+#
+# 1. verify_customer_pin: when it returns success, the gateway parses the
+#    response and stores the verified customer_id on a per-/v1/chat-call
+#    `_ChatSession`.
+# 2. list_orders / get_order / create_order (only when principal == "customer"):
+#    refuse to run if no customer_id is captured ("verify first"); inject
+#    customer_id into args when the upstream accepts it; post-filter the
+#    response so only rows owned by the verified customer are returned.
+#
+# This is single-turn enforcement — session state resets between /v1/chat
+# calls. Multi-turn flows require the client to re-verify (or a future
+# cross-request session store).
+#
+# Field names below assume the upstream response shape — adjust if your tools
+# use different key names. The `_extract_customer_id` and `_filter_by_customer`
+# helpers walk MCP content blocks and parse the embedded JSON text payloads.
+
+_VERIFY_TOOL = "remote-mcp__verify_customer_pin"
+_VERIFY_RESPONSE_FIELD = "customer_id"  # field on verify response holding the customer_id
+_ORDER_OWNER_FIELD = "customer_id"  # field on each order indicating its owning customer
+
+
+@dataclass(frozen=True)
+class _ScopeSpec:
+    """How to enforce row-level scoping on a single customer-scoped tool."""
+
+    inject_arg: str | None = None
+    """Arg name to inject (overriding any agent-supplied value) with the
+    verified customer_id. None = no injection (tool doesn't accept it)."""
+
+    filter_rows_by: str | None = None
+    """Field name on each row of a list-returning tool to filter by.
+    None = response isn't a list / no row filter."""
+
+    filter_single_by: str | None = None
+    """Field name on a single-object-returning tool. If the returned
+    object's value doesn't match the verified customer_id, return
+    'not found' instead (don't leak existence). None = not applicable."""
+
+
+CUSTOMER_SCOPING: dict[str, _ScopeSpec] = {
+    "remote-mcp__list_orders": _ScopeSpec(
+        inject_arg="customer_id",
+        filter_rows_by=_ORDER_OWNER_FIELD,
+    ),
+    "remote-mcp__get_order": _ScopeSpec(
+        filter_single_by=_ORDER_OWNER_FIELD,
+    ),
+    "remote-mcp__create_order": _ScopeSpec(
+        inject_arg="customer_id",
+    ),
+}
+
+
+@dataclass
+class _ChatSession:
+    """Per-/v1/chat-call state shared across tool invocations within one
+    Runner.run. Captures the verified customer_id so subsequent scoped tools
+    can enforce isolation."""
+
+    verified_customer_id: str | None = None
+    # Traces are kept here too so the scoping wrappers can record the
+    # *filtered* result rather than the raw upstream response.
+    traces: list[ToolCallTrace] = field(default_factory=list)
+
+
+def _content_text(item: Any) -> str | None:
+    """Pull the text out of one MCP content block (object or dict)."""
+    text = getattr(item, "text", None)
+    if text is None and isinstance(item, dict):
+        text = item.get("text")
+    return text if isinstance(text, str) else None
+
+
+def _extract_customer_id(mcp_result: Any) -> str | None:
+    """Best-effort: walk MCP content blocks, JSON-parse text payloads, return
+    the first `customer_id` value found. Returns None if verification failed
+    or the response can't be parsed."""
+    items = mcp_result if isinstance(mcp_result, list) else [mcp_result]
+    for item in items:
+        text = _content_text(item)
+        if not text:
+            continue
+        try:
+            parsed = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(parsed, dict):
+            value = parsed.get(_VERIFY_RESPONSE_FIELD)
+            if isinstance(value, str | int):
+                return str(value)
+    return None
+
+
+def _filter_content_rows(mcp_result: Any, customer_id: str, field_name: str) -> Any:
+    """For a list-returning tool: keep only rows where `row[field_name]` == customer_id.
+    Returns MCP content blocks identical in shape to the input."""
+    items = mcp_result if isinstance(mcp_result, list) else [mcp_result]
+    out: list[Any] = []
+    for item in items:
+        text = _content_text(item)
+        if not text:
+            continue
+        try:
+            parsed = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(parsed, list):
+            kept = [
+                row
+                for row in parsed
+                if isinstance(row, dict) and str(row.get(field_name)) == customer_id
+            ]
+            out.append({"type": "text", "text": json.dumps(kept)})
+    return out
+
+
+def _filter_content_single(mcp_result: Any, customer_id: str, field_name: str) -> Any:
+    """For a single-object-returning tool: drop the payload (return 'not
+    found') if the object's `field_name` doesn't match customer_id. Never
+    confirm/deny existence — same shape either way."""
+    items = mcp_result if isinstance(mcp_result, list) else [mcp_result]
+    for item in items:
+        text = _content_text(item)
+        if not text:
+            continue
+        try:
+            parsed = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(parsed, dict) and str(parsed.get(field_name)) == customer_id:
+            return [{"type": "text", "text": json.dumps(parsed)}]
+    return [{"type": "text", "text": "not found"}]
+
+
+# Instructions are chosen per principal so the prompt never references tools
+# the caller can't actually invoke (that produces hallucinated tool calls and
+# 400s from the upstream model).
+_INSTRUCTIONS_CUSTOMER = (
+    "You are a helpful customer service assistant for an online electronics store. "
+    "You ALWAYS verify the customer first with verify_customer_pin(email, pin) "
+    "before calling any order tool — list_orders, get_order, and create_order "
+    "require verification and only act on the verified customer's own data. "
+    "If the user asks about orders before providing their email and PIN, ask "
+    "for them. Use list_products / search_products / get_product for catalog "
+    "questions. Keep replies concise."
+)
+_INSTRUCTIONS_STAFF = (
+    "You are an internal admin assistant for an online electronics store with "
+    "full access to system-wide data (all customers, all orders). Use the "
+    "provided tools to look up any customer, order, or product. Keep replies concise."
+)
+_INSTRUCTIONS_ANONYMOUS = (
+    "You are a helpful product assistant for an online electronics store. "
+    "Answer general questions about products and store policies from your own "
+    "knowledge. You do NOT have any tools available — do not attempt to call "
+    "any. You cannot access customer accounts, orders, or any personal data. "
+    "If a user asks about their orders or account, ask them to sign in first. "
+    "Keep replies concise."
+)
+
+
+def _instructions_for(principal: Principal) -> str:
+    if principal == "anonymous":
+        return _INSTRUCTIONS_ANONYMOUS
+    if principal == "customer":
+        return _INSTRUCTIONS_CUSTOMER
+    return _INSTRUCTIONS_STAFF
 
 
 class ChatMessage(BaseModel):
@@ -104,20 +298,27 @@ async def build_function_tools(
     traces: list[ToolCallTrace],
     *,
     principal: Principal = DEFAULT_PRINCIPAL,
+    session: _ChatSession | None = None,
 ) -> list[Tool]:
-    """Wrap every MCP tool from every server as a FunctionTool that records traces.
+    """Wrap every MCP tool from every server as a FunctionTool.
 
-    `principal` scopes the visible toolset: anonymous callers only see tools
-    listed in ANONYMOUS_ALLOWED_TOOLS; customer and staff see the full catalog.
+    `principal` filters which tools are exposed (see TOOL_MIN_PRINCIPAL).
+    For `customer`, tools listed in CUSTOMER_SCOPING are wrapped to enforce
+    row-level scoping via the `session` (which captures customer_id from
+    verify_customer_pin and gates / filters subsequent order tool calls).
     """
+    if session is None:
+        session = _ChatSession(traces=traces)
     tools: list[Tool] = []
     for server, client in clients.items():
         for t in await client.list_tools():
             qualified = _qualify(server, t["name"])
-            if principal == "anonymous" and qualified not in ANONYMOUS_ALLOWED_TOOLS:
+            if not _principal_can_call(principal, qualified):
                 continue
             schema = _ensure_object_schema(t.get("inputSchema"))
-            tools.append(_make_function_tool(server, client, t, schema, traces))
+            tools.append(
+                _make_function_tool(server, client, t, schema, session, principal=principal)
+            )
     return tools
 
 
@@ -126,21 +327,65 @@ def _make_function_tool(
     client: _MCPClientProto,
     tool_def: dict[str, Any],
     schema: dict[str, Any],
-    traces: list[ToolCallTrace],
+    session: _ChatSession,
+    *,
+    principal: Principal,
 ) -> FunctionTool:
     tool_name = tool_def["name"]
     qualified = _qualify(server, tool_name)
     description = (tool_def.get("description") or "").strip() or qualified
 
+    captures_customer = qualified == _VERIFY_TOOL
+    scope: _ScopeSpec | None = CUSTOMER_SCOPING.get(qualified) if principal == "customer" else None
+
     async def on_invoke(_ctx: RunContextWrapper[Any], args_json: str) -> str:
         args: dict[str, Any] = json.loads(args_json) if args_json else {}
+
+        # Pre-gate scoped tools: require a verified customer_id.
+        if scope is not None and session.verified_customer_id is None:
+            session.traces.append(
+                ToolCallTrace(server=server, tool=tool_name, arguments=args, result=None)
+            )
+            return (
+                "error: please verify your identity first by calling "
+                "verify_customer_pin(email, pin)"
+            )
+
+        # Inject verified customer_id (overriding any agent-supplied value).
+        if scope is not None and scope.inject_arg is not None:
+            assert session.verified_customer_id is not None  # checked above
+            args[scope.inject_arg] = session.verified_customer_id
+
         try:
             result = await client.call_tool(tool_name, args)
         except MCPToolError as exc:
             log.warning("chat_tool_error", server=server, tool=tool_name)
-            traces.append(ToolCallTrace(server=server, tool=tool_name, arguments=args, result=None))
+            session.traces.append(
+                ToolCallTrace(server=server, tool=tool_name, arguments=args, result=None)
+            )
             return f"error: {exc}"
-        traces.append(ToolCallTrace(server=server, tool=tool_name, arguments=args, result=result))
+
+        # Capture verified customer_id from verify_customer_pin's response.
+        if captures_customer:
+            cid = _extract_customer_id(result)
+            if cid is not None:
+                session.verified_customer_id = cid
+
+        # Post-filter customer-scoped responses.
+        if scope is not None:
+            assert session.verified_customer_id is not None
+            if scope.filter_rows_by is not None:
+                result = _filter_content_rows(
+                    result, session.verified_customer_id, scope.filter_rows_by
+                )
+            elif scope.filter_single_by is not None:
+                result = _filter_content_single(
+                    result, session.verified_customer_id, scope.filter_single_by
+                )
+
+        session.traces.append(
+            ToolCallTrace(server=server, tool=tool_name, arguments=args, result=result)
+        )
         return _stringify_mcp_result(result)
 
     return FunctionTool(
@@ -167,12 +412,10 @@ class ChatService:
         clients: dict[str, _MCPClientProto],
         groq_api_key: str,
         model: str,
-        instructions: str = _DEFAULT_INSTRUCTIONS,
         max_turns: int = _DEFAULT_MAX_TURNS,
         groq_base_url: str = "https://api.groq.com/openai/v1",
     ) -> None:
         self._clients = clients
-        self._instructions = instructions
         self._max_turns = max_turns
         self._openai_client = AsyncOpenAI(
             api_key=groq_api_key,
@@ -185,11 +428,13 @@ class ChatService:
         history: list[ChatMessage],
         principal: Principal = DEFAULT_PRINCIPAL,
     ) -> ChatReply:
-        traces: list[ToolCallTrace] = []
-        tools = await build_function_tools(self._clients, traces, principal=principal)
+        session = _ChatSession()
+        tools = await build_function_tools(
+            self._clients, session.traces, principal=principal, session=session
+        )
         agent: Agent[Any] = Agent(
             name="andela-mcp-chat",
-            instructions=self._instructions,
+            instructions=_instructions_for(principal),
             tools=tools,
             model=self._model,
         )
@@ -198,7 +443,7 @@ class ChatService:
         )
         return ChatReply(
             reply=str(result.final_output or "").strip(),
-            tool_calls=traces,
+            tool_calls=session.traces,
         )
 
 
