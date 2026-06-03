@@ -89,8 +89,8 @@ async def test_mcp_client_call_tool_no_timeout_when_none() -> None:
     mock_session = AsyncMock()
     mock_session.call_tool.return_value = MagicMock(isError=False, content="result")
     client._session = mock_session
-
+ 
     # Should work normally
     result = await client.call_tool("test_tool", {"arg": "value"})
     assert result == "result"
-    mock_session.call_tool.assert_awaited_once_with("test_tool", {"arg": "value"})
+    mock_session.call_tool.assert_awaited_once_with("test_tool", arguments={"arg": "value"})
