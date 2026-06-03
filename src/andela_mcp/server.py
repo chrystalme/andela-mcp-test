@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import hmac
 import time
 import uuid
@@ -12,6 +13,7 @@ import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -42,12 +44,21 @@ log = get_logger(__name__)
 _STATIC_DIR = Path(__file__).parent / "static"
 _CHAT_RATE_LIMIT = "10/minute"  # per remote IP
 
-# Module-level limiter so the @limiter.limit decorator can attach metadata
-# at import time. The Limiter instance is also bound to app.state in create_app.
-limiter = Limiter(key_func=get_remote_address)
-
 # auto_error=False so we can return a structured 401 instead of FastAPI's default 403.
 _admin_bearer = HTTPBearer(auto_error=False)
+
+
+def _get_forwarded_address(request: Request) -> str:
+    """
+    Return the client IP address, taking into account X-Forwarded-For and X-Real-IP headers.
+    This is for rate limiting behind a proxy.
+    """
+    if forwarded := request.headers.get("X-Forwarded-For"):
+        # X-Forwarded-For can be a comma-separated list; the first is the client.
+        return forwarded.split(",")[0].strip()
+    if real_ip := request.headers.get("X-Real-IP"):
+        return real_ip.strip()
+    return get_remote_address(request)
 
 
 async def require_admin(
@@ -60,13 +71,13 @@ async def require_admin(
     if expected is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="admin auth not configured: set ANDELA_MCP_ADMIN_TOKEN",
+            detail="Admin endpoint unavailable",
         )
     presented = creds.credentials if creds is not None else ""
     if not hmac.compare_digest(presented, expected.get_secret_value()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid or missing admin bearer token",
+            detail="Invalid credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -100,7 +111,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     clients: dict[str, MCPClient] = {}
     try:
         for cfg in configs:
-            client = MCPClient(cfg)
+            client = MCPClient(cfg, timeout=settings.mcp_timeout)
             try:
                 await client.connect()
             except MCPConnectError:
@@ -140,8 +151,12 @@ async def _index(_request: Request) -> HTMLResponse:
     return HTMLResponse((_STATIC_DIR / "index.html").read_text(encoding="utf-8"))
 
 
-async def _healthz() -> dict[str, str]:
-    return {"status": "ok", "version": __version__}
+async def _healthz(request: Request) -> dict[str, str]:
+    settings: Settings = request.app.state.settings
+    response = {"status": "ok"}
+    if not settings.is_production:
+        response["version"] = __version__
+    return response
 
 
 async def _readyz(request: Request) -> dict[str, Any]:
@@ -159,13 +174,13 @@ async def _list_tools(request: Request) -> dict[str, list[dict[str, Any]]]:
             log.warning("list_tools_timeout", server=name)
             raise HTTPException(
                 status_code=504,
-                detail=f"timeout listing tools on {name!r}",
+                detail="Gateway timeout",
             ) from exc
         except Exception as exc:
             log.exception("list_tools_failed", server=name)
             raise HTTPException(
                 status_code=502,
-                detail=f"upstream MCP server {name!r} failed to list tools: {exc}",
+                detail="Bad gateway",
             ) from exc
     return out
 
@@ -179,23 +194,22 @@ async def _call_tool(req: ToolCallRequest, request: Request) -> ToolCallResponse
         result = await client.call_tool(req.tool, req.arguments)
     except MCPToolError as exc:
         log.warning("call_tool_upstream_error", server=req.server, tool=req.tool)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail="Bad gateway") from exc
     except TimeoutError as exc:
         log.warning("call_tool_timeout", server=req.server, tool=req.tool)
         raise HTTPException(
             status_code=504,
-            detail=f"timeout calling tool {req.tool!r} on {req.server!r}",
+            detail="Gateway timeout",
         ) from exc
     except Exception as exc:
         log.exception("call_tool_failed", server=req.server, tool=req.tool)
         raise HTTPException(
             status_code=502,
-            detail=f"upstream MCP server {req.server!r} failed: {exc}",
+            detail="Bad gateway",
         ) from exc
     return ToolCallResponse(server=req.server, tool=req.tool, result=result)
 
 
-@limiter.limit(_CHAT_RATE_LIMIT)
 async def _chat(request: Request, req: ChatRequest) -> ChatReply:
     chat_service: ChatService | None = request.app.state.chat
     if chat_service is None:
@@ -223,11 +237,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.clients = {}
     app.state.chat = None
+
+    # Setup rate limiter with proxy-aware key function
+    limiter = Limiter(key_func=_get_forwarded_address, default_limits=[settings.chat_rate_limit])
     app.state.limiter = limiter
     # slowapi's handler is typed `(Request, RateLimitExceeded) -> Response`,
     # which is narrower than Starlette's expected `(Request, Exception)`. Cast
     # is safe — the handler is only invoked with RateLimitExceeded.
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+    # Add CORS middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allow_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Add security headers middleware
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # HSTS would be handled at the proxy/ingress level in production
+        return response
+
+    # Rate limit dependency for chat endpoint
+    async def _chat_rate_limit(request: Request) -> None:
+        await limiter.hit_async(request, request.url.path)
 
     @app.middleware("http")
     async def request_context(request: Request, call_next: Any) -> Any:
@@ -275,7 +316,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response_model=ToolCallResponse,
         dependencies=[Depends(require_admin)],
     )
-    app.add_api_route("/v1/chat", _chat, methods=["POST"], response_model=ChatReply)
+    app.add_api_route(
+        "/v1/chat",
+        _chat,
+        methods=["POST"],
+        response_model=ChatReply,
+        dependencies=[Depends(limiter.limit(settings.chat_rate_limit))],
+    )
 
     return app
 

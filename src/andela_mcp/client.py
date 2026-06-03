@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -125,8 +126,9 @@ def load_server_configs(path: Path) -> list[MCPServerConfig]:
 class MCPClient:
     """Manages a single MCP session over stdio, HTTP, or SSE."""
 
-    def __init__(self, config: MCPServerConfig) -> None:
+    def __init__(self, config: MCPServerConfig, timeout: float | None = None) -> None:
         self.config = config
+        self._timeout = timeout
         self._stack = AsyncExitStack()
         self._session: ClientSession | None = None
 
@@ -161,7 +163,7 @@ class MCPClient:
                         "mcp_connect_stdio",
                         server=self.config.name,
                         command=self.config.command,
-                        args=list(self.config.args),
+                        arg_count=len(self.config.args),
                     )
                     params = StdioServerParameters(
                         command=self.config.command,
@@ -224,7 +226,10 @@ class MCPClient:
         return self._session
 
     async def list_tools(self) -> list[dict[str, Any]]:
-        result = await self.session.list_tools()
+        if self._timeout is not None:
+            result = await asyncio.wait_for(self.session.list_tools(), timeout=self._timeout)
+        else:
+            result = await self.session.list_tools()
         tools = [t.model_dump() for t in result.tools]
         log.debug("mcp_list_tools", server=self.config.name, count=len(tools))
         return tools
@@ -237,7 +242,10 @@ class MCPClient:
             tool=name,
             argument_keys=sorted(arguments),
         )
-        result = await self.session.call_tool(name, arguments=arguments)
+        if self._timeout is not None:
+            result = await asyncio.wait_for(self.session.call_tool(name, arguments=arguments), timeout=self._timeout)
+        else:
+            result = await self.session.call_tool(name, arguments=arguments)
         if result.isError:
             log.warning(
                 "mcp_tool_returned_error",
@@ -248,7 +256,7 @@ class MCPClient:
                 "mcp_tool_error_full_content",
                 server=self.config.name,
                 tool=name,
-                content=str(result.content),
+                content=_truncate_for_error(result.content, limit=200),
             )
             raise MCPToolError(
                 f"tool {name!r} returned an error: {_truncate_for_error(result.content)}"
