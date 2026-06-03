@@ -68,6 +68,15 @@ class Settings(BaseSettings):
 
     servers_config_path: Path = Path("config/servers.json")
 
+    # CORS settings
+    cors_allow_origins: list[str] = ["*"]
+
+    # MCP client timeout for upstream calls (seconds)
+    mcp_timeout: float = 30.0
+
+    # Chat endpoint rate limit (e.g., "10/minute")
+    chat_rate_limit: str = "10/minute"
+
     @property
     def is_production(self) -> bool:
         return self.environment == Environment.PROD

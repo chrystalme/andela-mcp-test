@@ -11,6 +11,9 @@ from agents import (
     RunContextWrapper,
     Runner,
     Tool,
+    input_guardrail,
+    output_guardrail,
+    GuardrailFunctionOutput,
     set_default_openai_api,
     set_tracing_disabled,
     set_tracing_export_api_key,
@@ -20,6 +23,10 @@ from openai.types.responses import ResponseInputItemParam
 from pydantic import BaseModel, Field
 
 from andela_mcp.client import MCPClient, MCPToolError
+from andela_mcp.guardrails.technical_support import (
+    technical_support_input_guardrail,
+    technical_support_output_guardrail,
+)
 from andela_mcp.logging import get_logger
 
 log = get_logger(__name__)
@@ -459,6 +466,8 @@ class ChatService:
             instructions=_instructions_for(principal),
             tools=tools,
             model=self._model,
+            input_guardrails=[technical_support_input_guardrail],
+            output_guardrails=[technical_support_output_guardrail],
         )
         result = await Runner.run(
             agent, input=_history_to_input(history), max_turns=self._max_turns
