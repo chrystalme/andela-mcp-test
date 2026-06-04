@@ -268,10 +268,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # HSTS would be handled at the proxy/ingress level in production
         return response
 
-    # Rate limit dependency for chat endpoint
-    async def _chat_rate_limit(request: Request) -> None:
-        await limiter.hit(request, request.url.path)
-
     @app.middleware("http")
     async def request_context(request: Request, call_next: Any) -> Any:
         request_id = request.headers.get("x-request-id", str(uuid.uuid4()))

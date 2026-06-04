@@ -228,7 +228,8 @@ async def technical_support_input_guardrail(
                 else:
                     text_parts.append(str(content))
             else:
-                text_parts.append(str(item))
+                # TResponseInputItem may include non-dict types; handle them
+                text_parts.append(str(item))  # type: ignore[unreachable]
         text = " ".join(text_parts)
     else:
         text = input
