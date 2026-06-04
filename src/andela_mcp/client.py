@@ -243,7 +243,9 @@ class MCPClient:
             argument_keys=sorted(arguments),
         )
         if self._timeout is not None:
-            result = await asyncio.wait_for(self.session.call_tool(name, arguments=arguments), timeout=self._timeout)
+            result = await asyncio.wait_for(
+                self.session.call_tool(name, arguments=arguments), timeout=self._timeout
+            )
         else:
             result = await self.session.call_tool(name, arguments=arguments)
         if result.isError:
