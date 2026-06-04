@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import hmac
 import time
 import uuid
@@ -11,9 +10,9 @@ from typing import Any
 
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -71,7 +70,7 @@ async def require_admin(
     if expected is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Admin endpoint unavailable",
+            detail="ANDELA_MCP_ADMIN_TOKEN not configured",
         )
     presented = creds.credentials if creds is not None else ""
     if not hmac.compare_digest(presented, expected.get_secret_value()):
@@ -194,7 +193,10 @@ async def _call_tool(req: ToolCallRequest, request: Request) -> ToolCallResponse
         result = await client.call_tool(req.tool, req.arguments)
     except MCPToolError as exc:
         log.warning("call_tool_upstream_error", server=req.server, tool=req.tool)
-        raise HTTPException(status_code=502, detail="Bad gateway") from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"upstream failed: {exc}",
+        ) from exc
     except TimeoutError as exc:
         log.warning("call_tool_timeout", server=req.server, tool=req.tool)
         raise HTTPException(
@@ -257,7 +259,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Add security headers middleware
     @app.middleware("http")
-    async def add_security_headers(request: Request, call_next):
+    async def add_security_headers(request: Request, call_next: Any) -> Any:
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -268,7 +270,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Rate limit dependency for chat endpoint
     async def _chat_rate_limit(request: Request) -> None:
-        await limiter.hit_async(request, request.url.path)
+        await limiter.hit(request, request.url.path)
 
     @app.middleware("http")
     async def request_context(request: Request, call_next: Any) -> Any:
