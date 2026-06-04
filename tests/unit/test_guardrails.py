@@ -4,14 +4,15 @@ import pytest
 from agents.run_context import RunContextWrapper
 
 from andela_mcp.guardrails.technical_support import (
+    is_technical_support_related,
     technical_support_input_guardrail,
     technical_support_output_guardrail,
-    is_technical_support_related,
 )
 
 
 class MockAgent:
     """Mock agent for guardrail testing."""
+
     pass
 
 
@@ -31,7 +32,6 @@ class MockAgent:
         ("Can I exchange this item for a different size?", True),
         ("", True),  # Empty string - no non-support patterns
         ("Hello", True),  # Single word, no patterns
-
         # Non-technical support - should return False
         ("Tell me a story about a robot", False),
         ("Write a poem about customer service", False),
@@ -63,7 +63,6 @@ def test_is_technical_support_related(text: str, expected: bool) -> None:
         ("I want to check my order status", False),
         ("Help me return an item", False),
         ("", False),  # Empty
-
         # Should trip (non-support)
         ("Tell me a story", True),
         ("Write a poem", True),
@@ -95,7 +94,6 @@ async def test_technical_support_input_guardrail(input_text: str, should_trip: b
         ("Hello! How can I help you today?", False),  # Social
         ("Thank you for contacting us!", False),  # Social
         ("", False),  # Empty
-
         # Should trip (non-support)
         ("Once upon a time, there was a robot...", True),
         ("The answer is 4.", True),
@@ -119,7 +117,7 @@ def test_guardrail_integration_with_chat_service() -> None:
     """Test that guardrails can be imported and are properly structured."""
     # This test ensures the guardrails are properly structured
     assert technical_support_input_guardrail is not None
-    assert hasattr(technical_support_input_guardrail, 'run')
+    assert hasattr(technical_support_input_guardrail, "run")
     assert technical_support_output_guardrail is not None
-    assert hasattr(technical_support_output_guardrail, 'run')
+    assert hasattr(technical_support_output_guardrail, "run")
     assert callable(is_technical_support_related)

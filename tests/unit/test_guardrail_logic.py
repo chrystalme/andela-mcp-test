@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Test the guardrail logic directly"""
 
-import re
 from andela_mcp.guardrails.technical_support import is_technical_support_related
+
 
 def test_guardrail_logic():
     """Test the is_technical_support_related function with various inputs"""
-    
+
     # Test cases: (input, expected_result, description)
     test_cases = [
         # Should be TRUE (support-related)
@@ -23,7 +23,6 @@ def test_guardrail_logic():
         ("Hi there", True, "Greeting"),
         ("Please help me", True, "Please request"),
         ("Sorry for the trouble", True, "Apology"),
-        
         # Should be FALSE (non-support)
         ("Tell me a joke", False, "Joke request"),
         ("Write a poem about love", False, "Poem request"),
@@ -36,7 +35,6 @@ def test_guardrail_logic():
         ("What is the capital of France?", False, "General knowledge"),
         ("Who won the football match?", False, "Sports query"),
         ("Let's talk about movies", False, "Movie discussion"),
-        
         # Edge cases
         ("", False, "Empty string"),
         ("   ", False, "Whitespace only"),
@@ -45,13 +43,13 @@ def test_guardrail_logic():
         ("product joke", True, "Mixed: has support keyword"),
         ("joke product", True, "Mixed: has support keyword (order doesn't matter)"),
     ]
-    
+
     print("Testing guardrail logic...")
     print("=" * 50)
-    
+
     passed = 0
     failed = 0
-    
+
     for text, expected, description in test_cases:
         result = is_technical_support_related(text)
         if result == expected:
@@ -65,16 +63,16 @@ def test_guardrail_logic():
             print(f"  Expected: {expected}, Got: {result}")
             failed += 1
         print()
-    
+
     print("=" * 50)
     print(f"Results: {passed} passed, {failed} failed")
-    
+
     if failed == 0:
         print("All tests passed! 🎉")
         return True
-    else:
-        print("Some tests failed! ❌")
-        return False
+    print("Some tests failed! ❌")
+    return False
+
 
 if __name__ == "__main__":
     test_guardrail_logic()

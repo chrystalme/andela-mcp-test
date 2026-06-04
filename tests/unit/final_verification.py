@@ -2,26 +2,30 @@
 """Final verification that the guardrails are working correctly"""
 
 import asyncio
-from andela_mcp.guardrails.technical_support import (
-    technical_support_input_guardrail,
-    technical_support_output_guardrail,
-    is_technical_support_related
-)
+import sys
+
 from agents.run_context import RunContextWrapper
-from agents import Agent
+
+from andela_mcp.guardrails.technical_support import (
+    is_technical_support_related,
+    technical_support_input_guardrail,
+)
+
 
 class MockAgent:
     pass
+
 
 # Create a proper RunContextWrapper
 def create_mock_context():
     return RunContextWrapper(context=None)
 
+
 async def test_guardrail_functions():
     """Test that the guardrail functions work as expected"""
     print("Testing guardrail functions...")
     print("=" * 50)
-    
+
     # Test cases for input guardrail
     test_cases = [
         # Should NOT tripwire (allowed)
@@ -36,14 +40,14 @@ async def test_guardrail_functions():
         ("Write a poem", True, "Poem request - should be blocked"),
         ("What is 2+2?", True, "Math question - should be blocked"),
     ]
-    
+
     print("Testing input guardrail:")
     ctx = create_mock_context()
     agent = MockAgent()
-    
+
     passed = 0
     total = len(test_cases)
-    
+
     for text, should_trip, description in test_cases:
         try:
             result = await technical_support_input_guardrail(ctx, agent, text)
@@ -63,10 +67,10 @@ async def test_guardrail_functions():
             print(f"   Text: {text!r}")
             print(f"   Error: {e}")
         print()
-    
+
     print(f"Input guardrail results: {passed}/{total} passed")
     print()
-    
+
     # Test is_technical_support_related directly
     print("Testing is_technical_support_related function:")
     related_cases = [
@@ -96,10 +100,10 @@ async def test_guardrail_functions():
         ("price", True),
         ("order", True),
     ]
-    
+
     passed2 = 0
     total2 = len(related_cases)
-    
+
     for text, expected in related_cases:
         result = is_technical_support_related(text)
         if result == expected:
@@ -108,18 +112,18 @@ async def test_guardrail_functions():
         else:
             print(f"✗ FAIL: {text!r} -> {result} (expected {expected})")
         print()
-    
+
     print(f"Direct function results: {passed2}/{total2} passed")
     print()
-    
+
     # Overall result
     if passed == total and passed2 == total2:
         print("🎉 All guardrail tests passed!")
         return True
-    else:
-        print("❌ Some guardrail tests failed!")
-        return False
+    print("❌ Some guardrail tests failed!")
+    return False
+
 
 if __name__ == "__main__":
     success = asyncio.run(test_guardrail_functions())
-    exit(0 if success else 1)
+    sys.exit(0 if success else 1)
