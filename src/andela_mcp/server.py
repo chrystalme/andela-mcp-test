@@ -108,34 +108,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise
 
     clients: dict[str, MCPClient] = {}
-    try:
-        for cfg in configs:
-            client = MCPClient(cfg, timeout=settings.mcp_timeout)
-            try:
-                await client.connect()
-            except MCPConnectError:
-                log.error(
-                    "startup_failed_mcp_connect",
-                    server=cfg.name,
-                    already_connected=list(clients),
-                )
-                raise
+    for cfg in configs:
+        client = MCPClient(cfg, timeout=settings.mcp_timeout)
+        try:
+            await client.connect()
             clients[cfg.name] = client
-        app.state.clients = clients
-        if settings.groq_api_key is not None:
-            app.state.chat = build_chat_service(
-                clients=clients,
-                groq_api_key=settings.groq_api_key.get_secret_value(),
-                model=settings.llm_model,
-                openai_api_key=(
-                    settings.openai_api_key.get_secret_value()
-                    if settings.openai_api_key is not None
-                    else None
-                ),
+            log.info("mcp_client_connected", server=cfg.name)
+        except MCPConnectError:
+            log.warning(
+                "mcp_connect_failed_startup_continuing",
+                server=cfg.name,
+                exc_info=True,
             )
-        else:
-            app.state.chat = None
-        log.info("startup_complete", servers=list(clients))
+            # Don't fail startup; the tool call will return an error later
+    app.state.clients = clients
+    if settings.groq_api_key is not None:
+        app.state.chat = build_chat_service(
+            clients=clients,
+            groq_api_key=settings.groq_api_key.get_secret_value(),
+            model=settings.llm_model,
+            openai_api_key=(
+                settings.openai_api_key.get_secret_value()
+                if settings.openai_api_key is not None
+                else None
+            ),
+        )
+    else:
+        app.state.chat = None
+    log.info("startup_complete", servers=list(clients))
+    try:
         yield
     finally:
         for client in clients.values():
