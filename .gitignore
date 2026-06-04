@@ -53,3 +53,6 @@ infra/**/secrets.auto.tfvars
 # IDE / OS extras
 .cspell/
 *.iml
+assets/architecture.mmd
+.gitignore
+debug_principal.py
