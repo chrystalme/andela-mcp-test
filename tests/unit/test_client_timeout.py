@@ -27,6 +27,7 @@ async def test_mcp_client_list_tools_applies_timeout() -> None:
 
     # Mock the session and its list_tools method to be slow
     mock_session = AsyncMock()
+
     async def slow_list_tools(*args, **kwargs):
         await asyncio.sleep(0.1)  # Longer than timeout
         return MagicMock(tools=[])
@@ -39,7 +40,7 @@ async def test_mcp_client_list_tools_applies_timeout() -> None:
         await client.list_tools()
 
 
-@ pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_mcp_client_list_tools_no_timeout_when_none() -> None:
     """Test that list_tools doesn't apply timeout when timeout is None."""
     config = MCPServerConfig(name="test", transport=MCPTransport.STDIO, command="echo")
@@ -59,7 +60,7 @@ async def test_mcp_client_list_tools_no_timeout_when_none() -> None:
     mock_session.list_tools.assert_awaited_once()
 
 
-@ pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_mcp_client_call_tool_applies_timeout() -> None:
     """Test that call_tool applies timeout when configured."""
     config = MCPServerConfig(name="test", transport=MCPTransport.STDIO, command="echo")
@@ -67,6 +68,7 @@ async def test_mcp_client_call_tool_applies_timeout() -> None:
 
     # Mock the session and its call_tool method to be slow
     mock_session = AsyncMock()
+
     async def slow_call_tool(*args, **kwargs):
         await asyncio.sleep(0.1)  # Longer than timeout
         return MagicMock(isError=False, content="result")
@@ -89,7 +91,7 @@ async def test_mcp_client_call_tool_no_timeout_when_none() -> None:
     mock_session = AsyncMock()
     mock_session.call_tool.return_value = MagicMock(isError=False, content="result")
     client._session = mock_session
- 
+
     # Should work normally
     result = await client.call_tool("test_tool", {"arg": "value"})
     assert result == "result"
