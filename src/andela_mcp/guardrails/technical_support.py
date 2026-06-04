@@ -291,6 +291,16 @@ async def technical_support_output_guardrail(
             output_info={"reason": "Output is social pleasantry"}, tripwire_triggered=False
         )
 
+    # Allow short greeting/clarifying responses (common in customer service)
+    # e.g., "Hello! How can I help you today?" "Hi there! What can I do for you?"
+    BRIEF_RESPONSE_MAX_WORDS = 20
+    if total_words <= BRIEF_RESPONSE_MAX_WORDS and social_word_count >= 1:
+        # Short response with at least one social word - likely a greeting/clarification
+        return GuardrailFunctionOutput(
+            output_info={"reason": "Output is brief greeting/clarification"},
+            tripwire_triggered=False,
+        )
+
     # Check if output contains non-support content
     if not is_technical_support_related(output):
         return GuardrailFunctionOutput(
