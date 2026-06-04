@@ -320,7 +320,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _chat,
         methods=["POST"],
         response_model=ChatReply,
-        dependencies=[Depends(limiter.limit(settings.chat_rate_limit))],
     )
 
     return app
