@@ -242,7 +242,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.chat = None
 
     # Setup rate limiter with proxy-aware key function
-    limiter = Limiter(key_func=_get_forwarded_address, default_limits=[settings.chat_rate_limit])
+    limiter = Limiter(key_func=_get_forwarded_address)
     app.state.limiter = limiter
     # slowapi's handler is typed `(Request, RateLimitExceeded) -> Response`,
     # which is narrower than Starlette's expected `(Request, Exception)`. Cast
